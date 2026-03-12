@@ -1,0 +1,25 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "amadeni",
+    "convex",
+    "esmoduleinterop",
+    "jwks",
+    "keygen",
+    "noEmit",
+    "pipefail",
+    "prepublish",
+    "seeddata",
+    "symid",
+    "tseslint",
+    "uppercased",
+    "vitest"
+  ],
+  "ignorePaths": [
+    "dist/",
+    "node_modules/",
+    "pnpm-lock.yaml",
+    "fixtures/minimal/convex/_generated/"
+  ]
+}
