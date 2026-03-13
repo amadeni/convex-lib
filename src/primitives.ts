@@ -58,3 +58,31 @@ export const createPrimitives = <User extends ConvexLibUser>(
     adminAction: customAction(actionGeneric, adminCtx),
   };
 };
+
+/**
+ * Public (unauthenticated) query/mutation/action builders.
+ *
+ * Use these for intentionally public endpoints (e.g. tenant config, health checks).
+ * They are thin wrappers around the generic Convex builders — their purpose is to
+ * make the intent explicit and detectable by CI auth-enforcement checks.
+ *
+ * Any file importing from `_generated/server` directly should be flagged by CI.
+ * Using `publicQuery` instead signals "this is intentionally unauthenticated".
+ *
+ * @example
+ * ```ts
+ * import { publicQuery } from '@amadeni/convex-lib';
+ *
+ * export const getTenantConfig = publicQuery({
+ *   args: { subdomain: v.string() },
+ *   handler: async (ctx, args) => {
+ *     return await ctx.db.query('tenantConfig')
+ *       .filter(q => q.eq(q.field('subdomain'), args.subdomain))
+ *       .first();
+ *   },
+ * });
+ * ```
+ */
+export const publicQuery = queryGeneric;
+export const publicMutation = mutationGeneric;
+export const publicAction = actionGeneric;

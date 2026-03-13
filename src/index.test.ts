@@ -5,9 +5,13 @@ import {
   ErrorCode,
   addSystemFields,
   createAuthorized,
+  createCapabilityChecker,
   createError,
   createPermissionChecker,
   createPrimitives,
+  publicQuery,
+  publicMutation,
+  publicAction,
   zid,
 } from './index';
 
@@ -80,6 +84,14 @@ describe('createPrimitives', () => {
       adminMutation: expect.any(Function),
       adminAction: expect.any(Function),
     });
+  });
+});
+
+describe('public builders', () => {
+  it('exports publicQuery, publicMutation, publicAction as functions', () => {
+    expect(typeof publicQuery).toBe('function');
+    expect(typeof publicMutation).toBe('function');
+    expect(typeof publicAction).toBe('function');
   });
 });
 
@@ -196,5 +208,107 @@ describe('createAuthorized', () => {
       authorizedMutation: expect.any(Function),
       authorizedAction: expect.any(Function),
     });
+  });
+});
+
+describe('createCapabilityChecker', () => {
+  const registry = {
+    'invoice.manage': {
+      label: 'Manage invoices',
+      category: 'invoices',
+      defaultRoles: ['accountant'] as const,
+    },
+    'client.create': {
+      label: 'Create client',
+      category: 'clients',
+      defaultRoles: ['cob'] as const,
+    },
+    'system.config': {
+      label: 'System config',
+      category: 'system',
+      defaultRoles: [] as const,
+    },
+  };
+
+  it('grants all capabilities to admin roles', async () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async () => null,
+    });
+
+    await expect(checker.has({}, 'admin', 'invoice.manage')).resolves.toBe(
+      true,
+    );
+    await expect(checker.has({}, 'admin', 'system.config')).resolves.toBe(true);
+  });
+
+  it('checks default roles from registry', async () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async () => null,
+    });
+
+    await expect(checker.has({}, 'accountant', 'invoice.manage')).resolves.toBe(
+      true,
+    );
+    await expect(checker.has({}, 'cob', 'invoice.manage')).resolves.toBe(false);
+    await expect(checker.has({}, 'cob', 'client.create')).resolves.toBe(true);
+    await expect(checker.has({}, undefined, 'client.create')).resolves.toBe(
+      false,
+    );
+  });
+
+  it('uses DB overrides over registry defaults', async () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async (_ctx, key) => {
+        if (key === 'invoice.manage') {
+          return { key, roles: ['cob', 'accountant'] };
+        }
+        return null;
+      },
+    });
+
+    // cob now has invoice.manage via override
+    await expect(checker.has({}, 'cob', 'invoice.manage')).resolves.toBe(true);
+  });
+
+  it('supports custom admin roles', async () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async () => null,
+      adminRoles: ['admin', 'superadmin'],
+    });
+
+    await expect(checker.has({}, 'superadmin', 'system.config')).resolves.toBe(
+      true,
+    );
+  });
+
+  it('checkAll returns all capabilities for a role', async () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async () => null,
+    });
+
+    const result = await checker.checkAll({}, 'accountant');
+    expect(result).toEqual({
+      'invoice.manage': true,
+      'client.create': false,
+      'system.config': false,
+    });
+  });
+
+  it('exposes registry keys', () => {
+    const checker = createCapabilityChecker({
+      registry,
+      getOverride: async () => null,
+    });
+
+    expect(checker.keys).toEqual([
+      'invoice.manage',
+      'client.create',
+      'system.config',
+    ]);
   });
 });
