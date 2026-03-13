@@ -1,4 +1,5 @@
 export * from './authorized';
+export * from './capabilities';
 export * from './errors';
 export * from './permissions';
 export * from './primitives';
