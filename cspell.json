@@ -14,7 +14,8 @@
     "symid",
     "tseslint",
     "uppercased",
-    "vitest"
+    "vitest",
+    "superadmin"
   ],
   "ignorePaths": [
     "dist/",
