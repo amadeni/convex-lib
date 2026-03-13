@@ -13,27 +13,33 @@ pnpm add @amadeni/convex-lib convex convex-helpers zod
 ```ts
 import { createPrimitives } from '@amadeni/convex-lib';
 
-export const { authQuery, authMutation, authAction, adminQuery, adminMutation, adminAction } =
-  createPrimitives({
-    resolveUser: async ctx => {
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) {
-        throw new Error('Unauthenticated');
-      }
+export const {
+  authQuery,
+  authMutation,
+  authAction,
+  adminQuery,
+  adminMutation,
+  adminAction,
+} = createPrimitives({
+  resolveUser: async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error('Unauthenticated');
+    }
 
-      const user = await ctx.db
-        .query('users')
-        .withIndex('by_email', q => q.eq('email', identity.email ?? ''))
-        .unique();
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_email', q => q.eq('email', identity.email ?? ''))
+      .unique();
 
-      if (!user) {
-        throw new Error('User not found');
-      }
+    if (!user) {
+      throw new Error('User not found');
+    }
 
-      return user;
-    },
-    isAdmin: user => user.role === 'admin',
-  });
+    return user;
+  },
+  isAdmin: user => user.role === 'admin',
+});
 ```
 
 ## Usage

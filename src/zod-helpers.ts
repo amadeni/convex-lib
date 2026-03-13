@@ -5,7 +5,7 @@ import { z } from 'zod';
  * The table name parameter is for documentation / type hinting only.
  */
 export const zid = (_tableName: string) =>
-  z.custom<string>((value) => typeof value === 'string');
+  z.custom<string>(value => typeof value === 'string');
 
 /**
  * Add Convex system fields (_id, _creationTime) to a Zod object shape.

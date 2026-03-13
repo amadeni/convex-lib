@@ -26,15 +26,19 @@ export class AppError extends ConvexError<{ code: ErrorCode }> {
 }
 
 export const createError = {
-  unauthenticated: () => new AppError(ErrorCode.UNAUTHENTICATED, 'User not authenticated'),
-  forbidden: (msg?: string) => new AppError(ErrorCode.FORBIDDEN, msg ?? 'Access forbidden'),
+  unauthenticated: () =>
+    new AppError(ErrorCode.UNAUTHENTICATED, 'User not authenticated'),
+  forbidden: (msg?: string) =>
+    new AppError(ErrorCode.FORBIDDEN, msg ?? 'Access forbidden'),
   notFound: (entity?: string) =>
     new AppError(
       ErrorCode.NOT_FOUND,
       entity ? `${entity} not found` : 'Resource not found',
     ),
-  conflict: (msg?: string) => new AppError(ErrorCode.CONFLICT, msg ?? 'Conflict'),
-  badRequest: (msg?: string) => new AppError(ErrorCode.BAD_REQUEST, msg ?? 'Bad request'),
+  conflict: (msg?: string) =>
+    new AppError(ErrorCode.CONFLICT, msg ?? 'Conflict'),
+  badRequest: (msg?: string) =>
+    new AppError(ErrorCode.BAD_REQUEST, msg ?? 'Bad request'),
   internal: (msg?: string) =>
     new AppError(ErrorCode.INTERNAL_ERROR, msg ?? 'Internal server error'),
 };
