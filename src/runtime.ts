@@ -59,10 +59,10 @@ export const getBuilders = <
 const missingResolverMessage = (runtime: 'query' | 'mutation' | 'action') =>
   `No user resolver configured for ${runtime}. Provide ${
     runtime === 'query'
-      ? '`resolveUser` or `resolveUserQuery`'
+      ? '`runtime.query.resolveUser`, `resolveUser`, or `resolveUserQuery`'
       : runtime === 'mutation'
-        ? '`resolveUser` or `resolveUserMutation`'
-        : '`resolveUserAction` or an action-compatible `resolveUser`'
+        ? '`runtime.mutation.resolveUser`, `resolveUser`, or `resolveUserMutation`'
+        : '`runtime.action.resolveUser`, `resolveUserAction`, or an action-compatible `resolveUser`'
   }.`;
 
 export const getQueryUserResolver = <
@@ -76,7 +76,10 @@ export const getQueryUserResolver = <
     GenericActionCtx<DataModel>
   >,
 ): ResolveUser<GenericQueryCtx<DataModel>, User> => {
-  const resolver = config.resolveUserQuery ?? config.resolveUser;
+  const resolver =
+    config.runtime?.query?.resolveUser ??
+    config.resolveUserQuery ??
+    config.resolveUser;
   if (!resolver) {
     throw new Error(missingResolverMessage('query'));
   }
@@ -95,7 +98,10 @@ export const getMutationUserResolver = <
     GenericActionCtx<DataModel>
   >,
 ): ResolveUser<GenericMutationCtx<DataModel>, User> => {
-  const resolver = config.resolveUserMutation ?? config.resolveUser;
+  const resolver =
+    config.runtime?.mutation?.resolveUser ??
+    config.resolveUserMutation ??
+    config.resolveUser;
   if (!resolver) {
     throw new Error(missingResolverMessage('mutation'));
   }
@@ -114,7 +120,10 @@ export const getActionUserResolver = <
     GenericActionCtx<DataModel>
   >,
 ): ResolveUser<GenericActionCtx<DataModel>, User> => {
-  const resolver = config.resolveUserAction ?? config.resolveUser;
+  const resolver =
+    config.runtime?.action?.resolveUser ??
+    config.resolveUserAction ??
+    config.resolveUser;
   if (!resolver) {
     throw new Error(missingResolverMessage('action'));
   }

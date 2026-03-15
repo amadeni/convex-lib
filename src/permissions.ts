@@ -4,6 +4,12 @@ import type {
   TableNamesInDataModel,
 } from 'convex/server';
 import type { GenericId } from 'convex/values';
+import {
+  createCapabilityChecker,
+  type CapabilityCheckerConfig,
+  type CapabilityCrudAction,
+  type CapabilityRegistry,
+} from './capabilities';
 import type { ConvexLibUser } from './types';
 
 export type PermissionAction = 'create' | 'read' | 'update' | 'delete';
@@ -36,6 +42,21 @@ export interface PermissionCheckerConfig<
   ): Promise<DocumentByName<DataModel, TableName> | null>;
   adminRoles?: readonly Exclude<Role, undefined>[];
   defaultAllow?: boolean;
+}
+
+export interface PermissionCheckerFromCapabilitiesConfig<
+  Ctx,
+  DataModel extends GenericDataModel = GenericDataModel,
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+  Role extends string | undefined = string | undefined,
+> extends CapabilityCheckerConfig<Ctx, TRegistry, Role> {
+  getDocument<TableName extends TableNamesInDataModel<DataModel>>(
+    ctx: Ctx,
+    table: TableName,
+    id: GenericId<TableName>,
+  ): Promise<DocumentByName<DataModel, TableName> | null>;
+  defaultAllow?: boolean;
+  ownershipByResource?: Partial<Record<string, string>>;
 }
 
 export interface PermissionChecker<
@@ -154,4 +175,86 @@ export const createPermissionChecker = <
     getPermissionEntry,
     getDocument: config.getDocument,
   };
+};
+
+export const createPermissionCheckerFromCapabilities = <
+  Ctx,
+  DataModel extends GenericDataModel = GenericDataModel,
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+  Role extends string | undefined = string | undefined,
+>(
+  config: PermissionCheckerFromCapabilitiesConfig<
+    Ctx,
+    DataModel,
+    TRegistry,
+    Role
+  >,
+): PermissionChecker<Ctx, DataModel, Role> => {
+  const capabilityChecker = createCapabilityChecker(config);
+  const defaultAllow = config.defaultAllow ?? false;
+  const ownershipByResource = config.ownershipByResource ?? {};
+  const actions: CapabilityCrudAction[] = [
+    'create',
+    'read',
+    'update',
+    'delete',
+  ];
+
+  return createPermissionChecker({
+    adminRoles: config.adminRoles,
+    defaultAllow,
+    getDocument: config.getDocument,
+    getPermission: async (ctx, role, resource) => {
+      const entry: PermissionEntry = {
+        role: String(role ?? 'default'),
+        resource,
+      };
+
+      let sawAnyGrant = false;
+      let sawOwnGrant = false;
+      let sawFullGrant = false;
+
+      for (const [key, definition] of Object.entries(config.registry) as Array<
+        [string & keyof TRegistry, TRegistry[keyof TRegistry]]
+      >) {
+        const grants = definition.grants?.[resource];
+        if (!grants) {
+          continue;
+        }
+
+        const hasCapability = await capabilityChecker.has(ctx, role, key);
+        if (!hasCapability) {
+          continue;
+        }
+
+        for (const action of actions) {
+          const grant = grants[action];
+          if (!grant) {
+            continue;
+          }
+
+          sawAnyGrant = true;
+          entry[action] = true;
+
+          if (grant === 'own') {
+            sawOwnGrant = true;
+          } else {
+            sawFullGrant = true;
+          }
+        }
+      }
+
+      if (!sawAnyGrant) {
+        return null;
+      }
+
+      if (sawOwnGrant && !sawFullGrant) {
+        entry.ownOnly = true;
+        entry.ownership =
+          ownershipByResource[resource] ?? DEFAULT_OWNERSHIP_FIELD;
+      }
+
+      return entry;
+    },
+  });
 };

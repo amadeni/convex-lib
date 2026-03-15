@@ -1,6 +1,15 @@
 # @amadeni/convex-lib
 
-Reusable Convex primitives for authenticated and admin-only functions, lightweight error helpers, and Zod utilities for Convex IDs and system fields.
+Typed auth, admin, capability, and authorization primitives for Convex apps.
+
+The library is designed for real Convex projects using:
+
+- generated `convex/_generated/*` builders and context types
+- `convex-helpers`
+- Convex Auth
+- strict TypeScript
+- capability-based access control
+- action/query/mutation wrappers
 
 ## Install
 
@@ -8,10 +17,109 @@ Reusable Convex primitives for authenticated and admin-only functions, lightweig
 pnpm add @amadeni/convex-lib convex convex-helpers zod
 ```
 
-## Setup
+## Recommended Setup
+
+For most apps, keep one central [`convex/lib.ts`](./convex/lib.ts) setup file and export all wrappers from a single composer:
 
 ```ts
-import { createPrimitives } from '@amadeni/convex-lib';
+import {
+  createActionResolvers,
+  createCapabilityChecker,
+  createConvexLib,
+  createError,
+  createPermissionCheckerFromCapabilities,
+} from '@amadeni/convex-lib';
+import { action, mutation, query } from './_generated/server';
+
+// Keep generated function refs outside `convex/` to avoid API cycles.
+import {
+  getCapabilityOverrideRef,
+  getPermissionEntryRef,
+  getUserBySubjectRef,
+} from '../lib/convex-refs';
+
+const capabilityRegistry = {
+  'posts.manage': {
+    label: 'Manage posts',
+    category: 'content',
+    defaultRoles: ['admin', 'editor'] as const,
+    grants: {
+      posts: {
+        read: true as const,
+        update: true as const,
+      },
+    },
+  },
+  'posts.delete': {
+    label: 'Delete posts',
+    category: 'content',
+    defaultRoles: ['admin'] as const,
+    grants: {
+      posts: {
+        delete: true as const,
+      },
+    },
+  },
+};
+
+const resolveUser = async (
+  ctx: typeof query._handlerCtx | typeof mutation._handlerCtx,
+) => {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw createError.unauthenticated();
+  }
+
+  const user = await ctx.db
+    .query('users')
+    .withIndex('by_subject', q => q.eq('subject', identity.subject))
+    .unique();
+
+  if (!user) {
+    throw createError.notFound('users', identity.subject);
+  }
+
+  return user;
+};
+
+const capabilityChecker = createCapabilityChecker({
+  registry: capabilityRegistry,
+  getOverride: async (ctx, key) => {
+    return await ctx.db
+      .query('capabilityOverrides')
+      .withIndex('by_key', q => q.eq('key', key))
+      .first();
+  },
+});
+
+const permissionChecker = createPermissionCheckerFromCapabilities({
+  registry: capabilityRegistry,
+  getOverride: async (ctx, key) => {
+    return await ctx.db
+      .query('capabilityOverrides')
+      .withIndex('by_key', q => q.eq('key', key))
+      .first();
+  },
+  getDocument: async (ctx, _table, id) => await ctx.db.get(id),
+  defaultAllow: false,
+});
+
+const actionRuntime = createActionResolvers({
+  registry: capabilityRegistry,
+  getUserRef: getUserBySubjectRef,
+  getUserArgs: async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw createError.unauthenticated();
+    }
+
+    return { subject: identity.subject };
+  },
+  getCapabilityOverrideRef,
+  getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
+  getPermissionRef: getPermissionEntryRef,
+  getPermissionArgs: (_ctx, role, resource) => ({ role, resource }),
+});
 
 export const {
   authQuery,
@@ -20,101 +128,187 @@ export const {
   adminQuery,
   adminMutation,
   adminAction,
-} = createPrimitives({
-  resolveUser: async ctx => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('Unauthenticated');
-    }
-
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', q => q.eq('email', identity.email ?? ''))
-      .unique();
-
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    return user;
-  },
+  capabilityQuery,
+  capabilityMutation,
+  capabilityAction,
+  authorizedQuery,
+  authorizedMutation,
+  authorizedAction,
+} = createConvexLib({
+  query,
+  mutation,
+  action,
   isAdmin: user => user.role === 'admin',
+  runtime: {
+    query: {
+      resolveUser,
+      capabilityChecker,
+      permissionChecker,
+    },
+    mutation: {
+      resolveUser,
+      capabilityChecker,
+      permissionChecker,
+    },
+    action: actionRuntime,
+  },
 });
 ```
 
-`createPrimitives` returns six helpers:
+This keeps the app-specific Convex types from `_generated/server` intact, so wrapped handlers still behave like your real `QueryCtx`, `MutationCtx`, and `ActionCtx`.
 
-- `authQuery`: Query that requires an authenticated user.
-- `authMutation`: Mutation that requires an authenticated user.
-- `authAction`: Action that requires an authenticated user.
-- `adminQuery`: Query that requires an authenticated admin user.
-- `adminMutation`: Mutation that requires an authenticated admin user.
-- `adminAction`: Action that requires an authenticated admin user.
+## Composer
 
-All six helpers resolve your user through `resolveUser`. They add `ctx.user` and `ctx.userId` to the handler context, and the `admin*` variants also enforce `isAdmin(user)`.
+`createConvexLib(...)` is the recommended top-level API for apps that want one central setup and one flat export surface.
 
-If you also pass a `capabilityChecker`, `createPrimitives` returns three additional helpers:
+It returns:
 
-- `capabilityQuery(capability)`: Query that requires the authenticated user to have a specific capability.
-- `capabilityMutation(capability)`: Mutation that requires the authenticated user to have a specific capability.
-- `capabilityAction(capability)`: Action that requires the authenticated user to have a specific capability.
+- `authQuery`, `authMutation`, `authAction`
+- `adminQuery`, `adminMutation`, `adminAction`
+- `capabilityQuery`, `capabilityMutation`, `capabilityAction`
+- `authorizedQuery`, `authorizedMutation`, `authorizedAction`
 
-## Usage
+If you prefer lower-level composition, `createPrimitives(...)` and `createAuthorized(...)` are still exported separately.
+
+## Runtime Config
+
+The preferred config shape is runtime-aware:
 
 ```ts
-import {
-  adminAction,
-  adminMutation,
-  adminQuery,
-  authAction,
-  authMutation,
-  authQuery,
-  createError,
-} from '@amadeni/convex-lib';
+runtime: {
+  query: { resolveUser, capabilityChecker, permissionChecker },
+  mutation: { resolveUser, capabilityChecker, permissionChecker },
+  action: { resolveUser, capabilityChecker, permissionChecker },
+}
+```
 
-export const getProfile = authQuery({
-  args: {},
-  handler: async ctx => {
-    return ctx.user;
-  },
-});
+This is clearer than parallel flat options and maps directly to how Convex runtimes differ in practice.
 
-export const updateProfile = authMutation({
-  args: {},
-  handler: async ctx => {
-    return { userId: ctx.userId };
-  },
-});
+Flat legacy options like `resolveUserAction`, `capabilityCheckerAction`, and `permissionCheckerAction` are still supported as compatibility aliases.
 
-export const syncProfile = authAction({
-  args: {},
-  handler: async ctx => {
-    return { email: ctx.user.email };
-  },
-});
+## Action Bridging
 
-export const listUsers = adminQuery({
-  args: {},
-  handler: async ctx => {
-    return { requestedBy: ctx.user.email };
-  },
-});
+Actions often cannot use `ctx.db` directly the same way as queries and mutations. Use `createActionResolvers(...)` to build a `runtime.action` entry from `runQuery(...)` refs:
 
-export const deleteAccount = adminMutation({
-  args: {},
-  handler: async (ctx, args) => {
-    void args;
-    throw createError.forbidden();
-  },
-});
-
-export const rebuildSearchIndex = adminAction({
-  args: {},
-  handler: async ctx => {
-    return { requestedBy: ctx.userId };
-  },
+```ts
+const actionRuntime = createActionResolvers({
+  registry: capabilityRegistry,
+  getUserRef,
+  getUserArgs: async ctx => ({
+    subject: (await ctx.auth.getUserIdentity())?.subject,
+  }),
+  getCapabilityOverrideRef,
+  getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
+  getPermissionRef,
+  getPermissionArgs: (_ctx, role, resource) => ({ role, resource }),
 });
 ```
+
+It returns:
+
+- `resolveUser`
+- `capabilityChecker` when `registry` and `getCapabilityOverrideRef` are provided
+- `permissionChecker` when `getPermissionRef` is provided
+
+That object can be passed directly to `runtime.action`.
+
+## Capabilities To CRUD
+
+If your app derives CRUD authorization from capability grants plus capability overrides, use `createPermissionCheckerFromCapabilities(...)`.
+
+Add `grants` to capability definitions:
+
+```ts
+const capabilityRegistry = {
+  'posts.manage': {
+    label: 'Manage posts',
+    category: 'content',
+    defaultRoles: ['editor'] as const,
+    grants: {
+      posts: {
+        read: true as const,
+        update: true as const,
+      },
+    },
+  },
+};
+```
+
+Then create the permission checker:
+
+```ts
+const permissionChecker = createPermissionCheckerFromCapabilities({
+  registry: capabilityRegistry,
+  getOverride: async (ctx, key) => {
+    return await ctx.db
+      .query('capabilityOverrides')
+      .withIndex('by_key', q => q.eq('key', key))
+      .first();
+  },
+  getDocument: async (ctx, _table, id) => await ctx.db.get(id),
+  defaultAllow: false,
+});
+```
+
+This removes the common local adapter that translates capability grants into CRUD permissions.
+
+## Generated API Cycle Guidance
+
+Avoid importing `convex/_generated/api` inside `convex/lib.ts` when that file is itself part of your Convex API surface. That can create circular type dependencies during code generation.
+
+Recommended pattern:
+
+1. Keep generated builders like `query`, `mutation`, and `action` inside `convex/lib.ts`.
+2. Keep function refs used by action bridges in a file outside `convex/`, for example `src/lib/convex-refs.ts`.
+3. Import those refs into `convex/lib.ts`.
+
+That keeps the setup typed without feeding `convex/_generated/api` back into the same module graph being generated.
+
+## Handler Context
+
+Wrapped handlers preserve the app’s real Convex context and add auth fields on top:
+
+- `ctx.user`
+- `ctx.userId`
+- `ctx.role`
+
+The original Convex surface remains available and typed:
+
+- `ctx.db.query('table')`
+- `ctx.runQuery(...)`
+- `ctx.runMutation(...)`
+- `ctx.storage`
+- `ctx.scheduler`
+
+That means helper functions expecting real `QueryCtx`, `MutationCtx`, or `ActionCtx` still accept the wrapped `ctx`.
+
+## Authorized Helpers
+
+`authorizedQuery(...)` adds:
+
+- `ctx.ownedQuery(tableName)`
+- `ctx.ownedDoc(tableName, documentId)`
+
+`authorizedMutation(...)` adds:
+
+- `ctx.ownedDoc(tableName, documentId)`
+- `ctx.ownedMutation.patch(tableName, documentId, patch)`
+- `ctx.ownedMutation.delete(tableName, documentId)`
+
+These remain typed against your app’s data model when you pass generated builders from `_generated/server`.
+
+## Error Helpers
+
+`createError` includes:
+
+- `unauthenticated()`
+- `unauthorized(message?)`
+- `forbidden(message?)`
+- `inactiveUser(message?)`
+- `notFound(entity, id?)`
+- `conflict(message?)`
+- `badRequest(message?)`
+- `internal(message?)`
 
 ## Zod Helpers
 
@@ -122,30 +316,14 @@ export const rebuildSearchIndex = adminAction({
 import { addSystemFields, zid } from '@amadeni/convex-lib';
 import { z } from 'zod';
 
-const userId = zid('users');
-
 const userSchema = z.object(
   addSystemFields('users', {
     email: z.string().email(),
-    role: z.string(),
+    role: z.string().optional(),
   }),
 );
+
+const userId = zid('users');
 ```
 
-`zid('users')` gives you a Zod validator for a Convex document ID represented as a string. The table name is mainly for readability and type intent.
-
-`addSystemFields('users', shape)` is useful when you already have a base document shape and want to extend it with the Convex-managed fields every stored document has:
-
-- `_id`: The document ID for that table.
-- `_creationTime`: The timestamp assigned by Convex.
-
-It returns a Zod object shape, not a finished schema, so wrap it with `z.object(...)` as shown above.
-
-```ts
-const parsedUser = userSchema.parse({
-  _id: 'abc123',
-  _creationTime: Date.now(),
-  email: 'hello@example.com',
-  role: 'admin',
-});
-```
+`addSystemFields(...)` returns a Zod object shape, so wrap it with `z.object(...)`.

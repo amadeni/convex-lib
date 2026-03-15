@@ -1,6 +1,12 @@
-import { actionGeneric, mutationGeneric, queryGeneric } from 'convex/server';
+import {
+  actionGeneric,
+  makeFunctionReference,
+  mutationGeneric,
+  queryGeneric,
+} from 'convex/server';
 import type {
   ActionBuilder,
+  FunctionReference,
   GenericActionCtx,
   GenericMutationCtx,
   GenericQueryCtx,
@@ -9,10 +15,13 @@ import type {
 } from 'convex/server';
 import type { GenericId } from 'convex/values';
 import {
+  createActionResolvers,
   createAuthorized,
   createCapabilityChecker,
+  createConvexLib,
   createError,
   createPermissionChecker,
+  createPermissionCheckerFromCapabilities,
   createPrimitives,
 } from '../src';
 
@@ -103,6 +112,12 @@ const capabilityRegistry = {
     label: 'Manage invoices',
     category: 'billing',
     defaultRoles: ['admin'] as const,
+    grants: {
+      posts: {
+        read: true as const,
+        update: true as const,
+      },
+    },
   },
 };
 
@@ -156,6 +171,23 @@ const permissionCheckerAction = createPermissionChecker<
   }),
   getDocument: async () => null,
 });
+
+const permissionCheckerFromCapabilities =
+  createPermissionCheckerFromCapabilities<
+    AppQueryCtx | AppMutationCtx,
+    AppDataModel,
+    typeof capabilityRegistry,
+    AppUser['role']
+  >({
+    registry: capabilityRegistry,
+    getOverride: async (ctx, key) => {
+      return await ctx.db
+        .query('capabilityOverrides')
+        .withIndex('by_key', q => q.eq('key', key))
+        .first();
+    },
+    getDocument: async (ctx, _table, id) => await ctx.db.get(id),
+  });
 
 const primitives = createPrimitives({
   query,
@@ -272,5 +304,89 @@ authorized.authorizedAction('posts')({
     acceptActionCtx(ctx);
     void ctx.runQuery;
     return ctx.userId;
+  },
+});
+
+const actionRuntime = createActionResolvers<
+  AppActionCtx,
+  AppUser,
+  AppDataModel,
+  typeof capabilityRegistry
+>({
+  registry: capabilityRegistry,
+  getUserRef: makeFunctionReference<'query', { email: string }, AppUser>(
+    'internal.users.getByEmail',
+  ) as FunctionReference<'query', 'public', { email: string }, AppUser>,
+  getUserArgs: () => ({ email: 'admin@example.com' }),
+  getCapabilityOverrideRef: makeFunctionReference<
+    'query',
+    { key: string },
+    { key: string; roles: string[] } | null
+  >('internal.capabilities.getOverride') as FunctionReference<
+    'query',
+    'public',
+    { key: string },
+    { key: string; roles: string[] } | null
+  >,
+  getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
+  getPermissionRef: makeFunctionReference<
+    'query',
+    { role: AppUser['role']; resource: string },
+    { role: string; resource: string; read?: boolean; update?: boolean } | null
+  >('internal.permissions.getEntry') as FunctionReference<
+    'query',
+    'public',
+    { role: AppUser['role']; resource: string },
+    { role: string; resource: string; read?: boolean; update?: boolean } | null
+  >,
+  getPermissionArgs: (_ctx, role, resource) => ({ role, resource }),
+});
+
+const {
+  authQuery: composedAuthQuery,
+  authorizedQuery: composedAuthorizedQuery,
+  capabilityQuery: composedCapabilityQuery,
+} = createConvexLib({
+  query,
+  mutation,
+  action,
+  isAdmin: user => user.role === 'admin',
+  runtime: {
+    query: {
+      resolveUser,
+      capabilityChecker,
+      permissionChecker: permissionCheckerFromCapabilities,
+    },
+    mutation: {
+      resolveUser,
+      capabilityChecker,
+      permissionChecker: permissionCheckerFromCapabilities,
+    },
+    action: actionRuntime,
+  },
+});
+
+composedAuthQuery({
+  args: {},
+  handler: async ctx => {
+    acceptQueryCtx(ctx);
+    return ctx.userId;
+  },
+});
+
+composedAuthorizedQuery('posts')({
+  args: {},
+  handler: async ctx => {
+    acceptQueryCtx(ctx);
+    const ownedPosts = await ctx.ownedQuery('posts');
+    return ownedPosts.first();
+  },
+});
+
+composedCapabilityQuery('invoice.manage')({
+  args: {},
+  handler: async ctx => {
+    acceptQueryCtx(ctx);
+    return ctx.user.email;
   },
 });

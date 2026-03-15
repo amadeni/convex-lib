@@ -129,7 +129,60 @@ export interface AuthorizedConfig<
   MutationVisibility,
   ActionVisibility
 > {
-  permissionChecker: PermissionChecker<
+  runtime?: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >['runtime'] & {
+    query?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['query'] & {
+      permissionChecker?: PermissionChecker<
+        GenericQueryCtx<DataModel>,
+        DataModel,
+        User['role']
+      >;
+    };
+    mutation?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['mutation'] & {
+      permissionChecker?: PermissionChecker<
+        GenericMutationCtx<DataModel>,
+        DataModel,
+        User['role']
+      >;
+    };
+    action?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['action'] & {
+      permissionChecker?: PermissionChecker<
+        GenericActionCtx<DataModel>,
+        DataModel,
+        User['role']
+      >;
+    };
+  };
+  permissionChecker?: PermissionChecker<
     | GenericQueryCtx<DataModel>
     | GenericMutationCtx<DataModel>
     | GenericActionCtx<DataModel>,
@@ -155,6 +208,17 @@ export interface AuthorizedConfig<
 
 const DEFAULT_OWNERSHIP_FIELD = 'createdBy';
 
+const missingPermissionCheckerMessage = (
+  runtime: 'query' | 'mutation' | 'action',
+) =>
+  `No permission checker configured for ${runtime}. Provide ${
+    runtime === 'query'
+      ? '`runtime.query.permissionChecker` or `permissionChecker`'
+      : runtime === 'mutation'
+        ? '`runtime.mutation.permissionChecker` or `permissionChecker`'
+        : '`runtime.action.permissionChecker`, `permissionCheckerAction`, or `permissionChecker`'
+  }.`;
+
 const toAuthContext = <User extends ConvexLibUser>(
   user: User,
 ): AuthContext<User> => ({
@@ -178,12 +242,22 @@ const getPermissionCheckerForQuery = <
     ActionVisibility
   >,
 ) =>
-  (config.permissionCheckerQuery ??
-    config.permissionChecker) as PermissionChecker<
-    GenericQueryCtx<DataModel>,
-    DataModel,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.query?.permissionChecker ??
+      config.permissionCheckerQuery ??
+      config.permissionChecker;
+
+    if (!checker) {
+      throw new Error(missingPermissionCheckerMessage('query'));
+    }
+
+    return checker as PermissionChecker<
+      GenericQueryCtx<DataModel>,
+      DataModel,
+      User['role']
+    >;
+  })();
 
 const getPermissionCheckerForMutation = <
   User extends ConvexLibUser,
@@ -200,12 +274,22 @@ const getPermissionCheckerForMutation = <
     ActionVisibility
   >,
 ) =>
-  (config.permissionCheckerMutation ??
-    config.permissionChecker) as PermissionChecker<
-    GenericMutationCtx<DataModel>,
-    DataModel,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.mutation?.permissionChecker ??
+      config.permissionCheckerMutation ??
+      config.permissionChecker;
+
+    if (!checker) {
+      throw new Error(missingPermissionCheckerMessage('mutation'));
+    }
+
+    return checker as PermissionChecker<
+      GenericMutationCtx<DataModel>,
+      DataModel,
+      User['role']
+    >;
+  })();
 
 const getPermissionCheckerForAction = <
   User extends ConvexLibUser,
@@ -222,12 +306,22 @@ const getPermissionCheckerForAction = <
     ActionVisibility
   >,
 ) =>
-  (config.permissionCheckerAction ??
-    config.permissionChecker) as PermissionChecker<
-    GenericActionCtx<DataModel>,
-    DataModel,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.action?.permissionChecker ??
+      config.permissionCheckerAction ??
+      config.permissionChecker;
+
+    if (!checker) {
+      throw new Error(missingPermissionCheckerMessage('action'));
+    }
+
+    return checker as PermissionChecker<
+      GenericActionCtx<DataModel>,
+      DataModel,
+      User['role']
+    >;
+  })();
 
 const resolveAuthorizedQueryContext = async <
   User extends ConvexLibUser,

@@ -120,7 +120,60 @@ export interface CapabilityPrimitivesConfig<
   MutationVisibility,
   ActionVisibility
 > {
-  capabilityChecker: CapabilityChecker<
+  runtime?: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >['runtime'] & {
+    query?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['query'] & {
+      capabilityChecker?: CapabilityChecker<
+        GenericQueryCtx<DataModel>,
+        TRegistry,
+        User['role']
+      >;
+    };
+    mutation?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['mutation'] & {
+      capabilityChecker?: CapabilityChecker<
+        GenericMutationCtx<DataModel>,
+        TRegistry,
+        User['role']
+      >;
+    };
+    action?: NonNullable<
+      ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >['runtime']
+    >['action'] & {
+      capabilityChecker?: CapabilityChecker<
+        GenericActionCtx<DataModel>,
+        TRegistry,
+        User['role']
+      >;
+    };
+  };
+  capabilityChecker?: CapabilityChecker<
     | GenericQueryCtx<DataModel>
     | GenericMutationCtx<DataModel>
     | GenericActionCtx<DataModel>,
@@ -214,6 +267,17 @@ const assertAdmin = <User extends ConvexLibUser>(
   return auth;
 };
 
+const missingCapabilityCheckerMessage = (
+  runtime: 'query' | 'mutation' | 'action',
+) =>
+  `No capability checker configured for ${runtime}. Provide ${
+    runtime === 'query'
+      ? '`runtime.query.capabilityChecker` or `capabilityChecker`'
+      : runtime === 'mutation'
+        ? '`runtime.mutation.capabilityChecker` or `capabilityChecker`'
+        : '`runtime.action.capabilityChecker`, `capabilityCheckerAction`, or `capabilityChecker`'
+  }.`;
+
 const getCapabilityCheckerForQuery = <
   User extends ConvexLibUser,
   DataModel extends GenericDataModel,
@@ -231,12 +295,22 @@ const getCapabilityCheckerForQuery = <
     TRegistry
   >,
 ) =>
-  (config.capabilityCheckerQuery ??
-    config.capabilityChecker) as CapabilityChecker<
-    GenericQueryCtx<DataModel>,
-    TRegistry,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.query?.capabilityChecker ??
+      config.capabilityCheckerQuery ??
+      config.capabilityChecker;
+
+    if (!checker) {
+      throw new Error(missingCapabilityCheckerMessage('query'));
+    }
+
+    return checker as CapabilityChecker<
+      GenericQueryCtx<DataModel>,
+      TRegistry,
+      User['role']
+    >;
+  })();
 
 const getCapabilityCheckerForMutation = <
   User extends ConvexLibUser,
@@ -255,12 +329,22 @@ const getCapabilityCheckerForMutation = <
     TRegistry
   >,
 ) =>
-  (config.capabilityCheckerMutation ??
-    config.capabilityChecker) as CapabilityChecker<
-    GenericMutationCtx<DataModel>,
-    TRegistry,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.mutation?.capabilityChecker ??
+      config.capabilityCheckerMutation ??
+      config.capabilityChecker;
+
+    if (!checker) {
+      throw new Error(missingCapabilityCheckerMessage('mutation'));
+    }
+
+    return checker as CapabilityChecker<
+      GenericMutationCtx<DataModel>,
+      TRegistry,
+      User['role']
+    >;
+  })();
 
 const getCapabilityCheckerForAction = <
   User extends ConvexLibUser,
@@ -279,12 +363,77 @@ const getCapabilityCheckerForAction = <
     TRegistry
   >,
 ) =>
-  (config.capabilityCheckerAction ??
-    config.capabilityChecker) as CapabilityChecker<
-    GenericActionCtx<DataModel>,
-    TRegistry,
-    User['role']
-  >;
+  (() => {
+    const checker =
+      config.runtime?.action?.capabilityChecker ??
+      config.capabilityCheckerAction ??
+      config.capabilityChecker;
+
+    if (!checker) {
+      throw new Error(missingCapabilityCheckerMessage('action'));
+    }
+
+    return checker as CapabilityChecker<
+      GenericActionCtx<DataModel>,
+      TRegistry,
+      User['role']
+    >;
+  })();
+
+const hasCapabilityChecker = <
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
+  TRegistry extends CapabilityRegistry,
+>(
+  config:
+    | ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >
+    | CapabilityPrimitivesConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility,
+        TRegistry
+      >,
+): config is CapabilityPrimitivesConfig<
+  User,
+  DataModel,
+  QueryVisibility,
+  MutationVisibility,
+  ActionVisibility,
+  TRegistry
+> =>
+  (() => {
+    const capabilityConfig = config as Partial<
+      CapabilityPrimitivesConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility,
+        TRegistry
+      >
+    >;
+
+    return (
+      capabilityConfig.capabilityChecker !== undefined ||
+      capabilityConfig.capabilityCheckerQuery !== undefined ||
+      capabilityConfig.capabilityCheckerMutation !== undefined ||
+      capabilityConfig.capabilityCheckerAction !== undefined ||
+      capabilityConfig.runtime?.query?.capabilityChecker !== undefined ||
+      capabilityConfig.runtime?.mutation?.capabilityChecker !== undefined ||
+      capabilityConfig.runtime?.action?.capabilityChecker !== undefined
+    );
+  })();
 
 export function createPrimitives<
   User extends ConvexLibUser,
@@ -421,7 +570,7 @@ export function createPrimitives<
     adminAction,
   };
 
-  if (!('capabilityChecker' in config)) {
+  if (!hasCapabilityChecker(config)) {
     return primitives;
   }
 

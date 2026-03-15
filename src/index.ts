@@ -1,5 +1,7 @@
+export * from './action-resolvers';
 export * from './authorized';
 export * from './capabilities';
+export * from './composer';
 export * from './errors';
 export * from './permissions';
 export * from './primitives';

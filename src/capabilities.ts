@@ -1,3 +1,11 @@
+export type CapabilityCrudAction = 'create' | 'read' | 'update' | 'delete';
+
+export type CapabilityCrudGrant = true | 'own';
+
+export type CapabilityResourceGrants = Partial<
+  Record<string, Partial<Record<CapabilityCrudAction, CapabilityCrudGrant>>>
+>;
+
 /**
  * A capability definition describes a single feature-level permission
  * with a label, category, and the roles that have it by default.
@@ -6,6 +14,7 @@ export interface CapabilityDefinition {
   label: string;
   category: string;
   defaultRoles: readonly string[];
+  grants?: CapabilityResourceGrants;
 }
 
 /**

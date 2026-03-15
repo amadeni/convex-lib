@@ -4,10 +4,13 @@ import {
   AppError,
   ErrorCode,
   addSystemFields,
+  createActionResolvers,
   createAuthorized,
   createCapabilityChecker,
+  createConvexLib,
   createError,
   createPermissionChecker,
+  createPermissionCheckerFromCapabilities,
   createPrimitives,
   publicQuery,
   publicMutation,
@@ -221,6 +224,46 @@ describe('createPermissionChecker', () => {
   });
 });
 
+describe('createPermissionCheckerFromCapabilities', () => {
+  it('derives CRUD permissions from capability grants', async () => {
+    const checker = createPermissionCheckerFromCapabilities({
+      registry: {
+        'posts.manage': {
+          label: 'Manage posts',
+          category: 'posts',
+          defaultRoles: ['editor'] as const,
+          grants: {
+            posts: {
+              read: true,
+              update: true,
+            },
+          },
+        },
+      },
+      getOverride: async () => null,
+      getDocument: async () => null,
+    });
+
+    await expect(
+      checker.hasPermission(
+        {},
+        { _id: 'user_1', email: 'editor@example.com', role: 'editor' },
+        'posts',
+        'update',
+      ),
+    ).resolves.toBe(true);
+
+    await expect(
+      checker.hasPermission(
+        {},
+        { _id: 'user_1', email: 'editor@example.com', role: 'editor' },
+        'posts',
+        'delete',
+      ),
+    ).resolves.toBe(false);
+  });
+});
+
 describe('createAuthorized', () => {
   it('returns the expected authorized builders', () => {
     const permissionChecker = createPermissionChecker({
@@ -239,6 +282,141 @@ describe('createAuthorized', () => {
     });
 
     expect(authorized).toMatchObject({
+      authorizedQuery: expect.any(Function),
+      authorizedMutation: expect.any(Function),
+      authorizedAction: expect.any(Function),
+    });
+  });
+});
+
+describe('createActionResolvers', () => {
+  it('builds an action runtime entry from runQuery refs', async () => {
+    const getUserRef = { name: 'getUser' } as never;
+    const getCapabilityOverrideRef = { name: 'getCapabilityOverride' } as never;
+    const getPermissionRef = { name: 'getPermission' } as never;
+
+    const actionRuntime = createActionResolvers({
+      registry: {
+        'posts.manage': {
+          label: 'Manage posts',
+          category: 'posts',
+          defaultRoles: ['editor'] as const,
+        },
+      },
+      getUserRef,
+      getCapabilityOverrideRef,
+      getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
+      getPermissionRef,
+      getPermissionArgs: (_ctx, role, resource) => ({ role, resource }),
+    });
+
+    const ctx = {
+      runQuery: async (ref: unknown, args?: Record<string, unknown>) => {
+        if (ref === getUserRef) {
+          return {
+            _id: 'user_1',
+            email: 'editor@example.com',
+            role: 'editor',
+          };
+        }
+
+        if (ref === getCapabilityOverrideRef) {
+          return args?.key === 'posts.manage'
+            ? { key: 'posts.manage', roles: ['editor'] }
+            : null;
+        }
+
+        if (ref === getPermissionRef) {
+          return args?.resource === 'posts'
+            ? { role: 'editor', resource: 'posts', read: true }
+            : null;
+        }
+
+        return null;
+      },
+    };
+
+    await expect(actionRuntime.resolveUser?.(ctx)).resolves.toEqual({
+      _id: 'user_1',
+      email: 'editor@example.com',
+      role: 'editor',
+    });
+    await expect(
+      actionRuntime.capabilityChecker?.has(ctx, 'editor', 'posts.manage'),
+    ).resolves.toBe(true);
+    await expect(
+      actionRuntime.permissionChecker?.hasPermission(
+        ctx,
+        { _id: 'user_1', email: 'editor@example.com', role: 'editor' },
+        'posts',
+        'read',
+      ),
+    ).resolves.toBe(true);
+  });
+});
+
+describe('createConvexLib', () => {
+  it('returns a flat composed surface', () => {
+    const capabilityChecker = createCapabilityChecker({
+      registry: {
+        'invoice.manage': {
+          label: 'Manage invoices',
+          category: 'invoices',
+          defaultRoles: ['admin'] as const,
+        },
+      },
+      getOverride: async () => null,
+    });
+    const permissionChecker = createPermissionChecker({
+      getPermission: async () => null,
+      getDocument: async () => null,
+    });
+
+    const convexLib = createConvexLib({
+      isAdmin: user => user.role === 'admin',
+      capabilityChecker,
+      permissionChecker,
+      runtime: {
+        query: {
+          resolveUser: async () => ({
+            _id: 'user_123',
+            email: 'test@example.com',
+            role: 'admin',
+          }),
+          capabilityChecker,
+          permissionChecker,
+        },
+        mutation: {
+          resolveUser: async () => ({
+            _id: 'user_123',
+            email: 'test@example.com',
+            role: 'admin',
+          }),
+          capabilityChecker,
+          permissionChecker,
+        },
+        action: {
+          resolveUser: async () => ({
+            _id: 'user_123',
+            email: 'test@example.com',
+            role: 'admin',
+          }),
+          capabilityChecker,
+          permissionChecker,
+        },
+      },
+    });
+
+    expect(convexLib).toMatchObject({
+      authQuery: expect.any(Function),
+      authMutation: expect.any(Function),
+      authAction: expect.any(Function),
+      adminQuery: expect.any(Function),
+      adminMutation: expect.any(Function),
+      adminAction: expect.any(Function),
+      capabilityQuery: expect.any(Function),
+      capabilityMutation: expect.any(Function),
+      capabilityAction: expect.any(Function),
       authorizedQuery: expect.any(Function),
       authorizedMutation: expect.any(Function),
       authorizedAction: expect.any(Function),

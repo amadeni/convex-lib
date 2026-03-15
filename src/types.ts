@@ -64,12 +64,28 @@ export type ResolveUser<Ctx, User extends ConvexLibUser> = (
   ctx: Ctx,
 ) => MaybePromise<User>;
 
+export interface RuntimeResolverConfigEntry<Ctx, User extends ConvexLibUser> {
+  resolveUser?: ResolveUser<Ctx, User>;
+}
+
+export interface RuntimeResolverConfig<
+  User extends ConvexLibUser,
+  QueryCtx,
+  MutationCtx,
+  ActionCtx,
+> {
+  query?: RuntimeResolverConfigEntry<QueryCtx, User>;
+  mutation?: RuntimeResolverConfigEntry<MutationCtx, User>;
+  action?: RuntimeResolverConfigEntry<ActionCtx, User>;
+}
+
 export interface RuntimeUserResolvers<
   User extends ConvexLibUser,
   QueryCtx,
   MutationCtx,
   ActionCtx,
 > {
+  runtime?: RuntimeResolverConfig<User, QueryCtx, MutationCtx, ActionCtx>;
   resolveUser?: ResolveUser<QueryCtx | MutationCtx, User>;
   resolveUserQuery?: ResolveUser<QueryCtx, User>;
   resolveUserMutation?: ResolveUser<MutationCtx, User>;
