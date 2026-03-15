@@ -35,6 +35,14 @@ export type AuthContext<User extends ConvexLibUser> = {
   role: User['role'];
 };
 
+export const toAuthContext = <User extends ConvexLibUser>(
+  user: User,
+): AuthContext<User> => ({
+  user,
+  userId: user._id,
+  role: user.role,
+});
+
 export type OwnedQuery<DataModel extends GenericDataModel> = <
   TableName extends TableNamesInDataModel<DataModel>,
 >(

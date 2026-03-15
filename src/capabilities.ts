@@ -164,13 +164,10 @@ export const createCapabilityChecker = <
     role: Role,
   ): Promise<Record<Key, boolean>> => {
     const keys = Object.keys(config.registry) as Key[];
-    const results = {} as Record<Key, boolean>;
-
-    for (const key of keys) {
-      results[key] = await has(ctx, role, key);
-    }
-
-    return results;
+    const entries = await Promise.all(
+      keys.map(async key => [key, await has(ctx, role, key)] as const),
+    );
+    return Object.fromEntries(entries) as Record<Key, boolean>;
   };
 
   const keys = Object.keys(config.registry) as readonly Key[];
