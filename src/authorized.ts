@@ -23,6 +23,7 @@ import {
   getMutationUserResolver,
   getQueryUserResolver,
 } from './runtime';
+import { toAuthContext } from './types';
 import type {
   AuthContext,
   ConvexLibConfig,
@@ -219,14 +220,6 @@ const missingPermissionCheckerMessage = (
         : '`runtime.action.permissionChecker`, `permissionCheckerAction`, or `permissionChecker`'
   }.`;
 
-const toAuthContext = <User extends ConvexLibUser>(
-  user: User,
-): AuthContext<User> => ({
-  user,
-  userId: user._id,
-  role: user.role,
-});
-
 const getPermissionCheckerForQuery = <
   User extends ConvexLibUser,
   DataModel extends GenericDataModel,
@@ -241,23 +234,22 @@ const getPermissionCheckerForQuery = <
     MutationVisibility,
     ActionVisibility
   >,
-) =>
-  (() => {
-    const checker =
-      config.runtime?.query?.permissionChecker ??
-      config.permissionCheckerQuery ??
-      config.permissionChecker;
+) => {
+  const checker =
+    config.runtime?.query?.permissionChecker ??
+    config.permissionCheckerQuery ??
+    config.permissionChecker;
 
-    if (!checker) {
-      throw new Error(missingPermissionCheckerMessage('query'));
-    }
+  if (!checker) {
+    throw new Error(missingPermissionCheckerMessage('query'));
+  }
 
-    return checker as PermissionChecker<
-      GenericQueryCtx<DataModel>,
-      DataModel,
-      User['role']
-    >;
-  })();
+  return checker as PermissionChecker<
+    GenericQueryCtx<DataModel>,
+    DataModel,
+    User['role']
+  >;
+};
 
 const getPermissionCheckerForMutation = <
   User extends ConvexLibUser,
@@ -273,23 +265,22 @@ const getPermissionCheckerForMutation = <
     MutationVisibility,
     ActionVisibility
   >,
-) =>
-  (() => {
-    const checker =
-      config.runtime?.mutation?.permissionChecker ??
-      config.permissionCheckerMutation ??
-      config.permissionChecker;
+) => {
+  const checker =
+    config.runtime?.mutation?.permissionChecker ??
+    config.permissionCheckerMutation ??
+    config.permissionChecker;
 
-    if (!checker) {
-      throw new Error(missingPermissionCheckerMessage('mutation'));
-    }
+  if (!checker) {
+    throw new Error(missingPermissionCheckerMessage('mutation'));
+  }
 
-    return checker as PermissionChecker<
-      GenericMutationCtx<DataModel>,
-      DataModel,
-      User['role']
-    >;
-  })();
+  return checker as PermissionChecker<
+    GenericMutationCtx<DataModel>,
+    DataModel,
+    User['role']
+  >;
+};
 
 const getPermissionCheckerForAction = <
   User extends ConvexLibUser,
@@ -305,23 +296,22 @@ const getPermissionCheckerForAction = <
     MutationVisibility,
     ActionVisibility
   >,
-) =>
-  (() => {
-    const checker =
-      config.runtime?.action?.permissionChecker ??
-      config.permissionCheckerAction ??
-      config.permissionChecker;
+) => {
+  const checker =
+    config.runtime?.action?.permissionChecker ??
+    config.permissionCheckerAction ??
+    config.permissionChecker;
 
-    if (!checker) {
-      throw new Error(missingPermissionCheckerMessage('action'));
-    }
+  if (!checker) {
+    throw new Error(missingPermissionCheckerMessage('action'));
+  }
 
-    return checker as PermissionChecker<
-      GenericActionCtx<DataModel>,
-      GenericDataModel,
-      User['role']
-    >;
-  })();
+  return checker as PermissionChecker<
+    GenericActionCtx<DataModel>,
+    GenericDataModel,
+    User['role']
+  >;
+};
 
 const resolveAuthorizedQueryContext = async <
   User extends ConvexLibUser,

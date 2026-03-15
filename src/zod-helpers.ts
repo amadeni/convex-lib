@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 /**
  * Create a Zod validator for a Convex document ID.
- * The table name parameter is for documentation / type hinting only.
+ * Validation only checks that the value is a string; it does not verify the
+ * actual Convex ID format. The table name parameter is for documentation /
+ * type hinting only.
  */
 export const zid = (_tableName: string) =>
   z.custom<string>(value => typeof value === 'string');
