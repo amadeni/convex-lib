@@ -1,166 +1,495 @@
-import { actionGeneric, mutationGeneric, queryGeneric } from 'convex/server';
 import {
   customAction,
   customCtx,
   customMutation,
   customQuery,
 } from 'convex-helpers/server/customFunctions';
-import type { CapabilityChecker, CapabilityRegistry } from './capabilities';
+import type { CustomBuilder } from 'convex-helpers/server/customFunctions';
+import type {
+  FunctionVisibility,
+  GenericActionCtx,
+  GenericDataModel,
+  GenericMutationCtx,
+  GenericQueryCtx,
+} from 'convex/server';
+import type {
+  CapabilityChecker,
+  CapabilityKey,
+  CapabilityRegistry,
+} from './capabilities';
 import { createError } from './errors';
-import type { AnyCtx, ConvexLibConfig, ConvexLibUser } from './types';
+import {
+  getActionUserResolver,
+  getBuilders,
+  getMutationUserResolver,
+  getQueryUserResolver,
+} from './runtime';
+import type { AuthContext, ConvexLibConfig, ConvexLibUser } from './types';
 
 export type { ConvexLibConfig, ConvexLibUser } from './types';
 
-export interface ConvexLibPrimitives {
-  authQuery: ReturnType<typeof customQuery>;
-  authMutation: ReturnType<typeof customMutation>;
-  authAction: ReturnType<typeof customAction>;
-  adminQuery: ReturnType<typeof customQuery>;
-  adminMutation: ReturnType<typeof customMutation>;
-  adminAction: ReturnType<typeof customAction>;
+type EmptyObject = Record<string, never>;
+
+type QueryPrimitiveBuilder<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  Visibility extends FunctionVisibility,
+> = CustomBuilder<
+  'query',
+  EmptyObject,
+  AuthContext<User>,
+  EmptyObject,
+  GenericQueryCtx<DataModel>,
+  Visibility,
+  object
+>;
+
+type MutationPrimitiveBuilder<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  Visibility extends FunctionVisibility,
+> = CustomBuilder<
+  'mutation',
+  EmptyObject,
+  AuthContext<User>,
+  EmptyObject,
+  GenericMutationCtx<DataModel>,
+  Visibility,
+  object
+>;
+
+type ActionPrimitiveBuilder<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  Visibility extends FunctionVisibility,
+> = CustomBuilder<
+  'action',
+  EmptyObject,
+  AuthContext<User>,
+  EmptyObject,
+  GenericActionCtx<DataModel>,
+  Visibility,
+  object
+>;
+
+export interface ConvexLibPrimitives<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
+> {
+  authQuery: QueryPrimitiveBuilder<User, DataModel, QueryVisibility>;
+  authMutation: MutationPrimitiveBuilder<User, DataModel, MutationVisibility>;
+  authAction: ActionPrimitiveBuilder<User, DataModel, ActionVisibility>;
+  adminQuery: QueryPrimitiveBuilder<User, DataModel, QueryVisibility>;
+  adminMutation: MutationPrimitiveBuilder<User, DataModel, MutationVisibility>;
+  adminAction: ActionPrimitiveBuilder<User, DataModel, ActionVisibility>;
 }
 
 export interface CapabilityPrimitives<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
 > {
   capabilityQuery: (
-    key: string & keyof TRegistry,
-  ) => ReturnType<typeof customQuery>;
+    key: CapabilityKey<TRegistry>,
+  ) => QueryPrimitiveBuilder<User, DataModel, QueryVisibility>;
   capabilityMutation: (
-    key: string & keyof TRegistry,
-  ) => ReturnType<typeof customMutation>;
+    key: CapabilityKey<TRegistry>,
+  ) => MutationPrimitiveBuilder<User, DataModel, MutationVisibility>;
   capabilityAction: (
-    key: string & keyof TRegistry,
-  ) => ReturnType<typeof customAction>;
+    key: CapabilityKey<TRegistry>,
+  ) => ActionPrimitiveBuilder<User, DataModel, ActionVisibility>;
 }
 
 export interface CapabilityPrimitivesConfig<
   User extends ConvexLibUser,
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
-> extends ConvexLibConfig<User> {
-  capabilityChecker: CapabilityChecker<TRegistry>;
+> extends ConvexLibConfig<
+  User,
+  DataModel,
+  QueryVisibility,
+  MutationVisibility,
+  ActionVisibility
+> {
+  capabilityChecker: CapabilityChecker<
+    | GenericQueryCtx<DataModel>
+    | GenericMutationCtx<DataModel>
+    | GenericActionCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
+  capabilityCheckerQuery?: CapabilityChecker<
+    GenericQueryCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
+  capabilityCheckerMutation?: CapabilityChecker<
+    GenericMutationCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
+  capabilityCheckerAction?: CapabilityChecker<
+    GenericActionCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
 }
 
-const resolveAuthContext = async <User extends ConvexLibUser>(
-  ctx: AnyCtx,
-  config: ConvexLibConfig<User>,
-) => {
-  const user = await config.resolveUser(ctx);
-  return { user, userId: user._id };
-};
+const toAuthContext = <User extends ConvexLibUser>(
+  user: User,
+): AuthContext<User> => ({
+  user,
+  userId: user._id,
+  role: user.role,
+});
 
-const resolveAdminContext = async <User extends ConvexLibUser>(
-  ctx: AnyCtx,
-  config: ConvexLibConfig<User>,
-) => {
-  const auth = await resolveAuthContext(ctx, config);
+const resolveQueryAuthContext = async <
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
+>(
+  ctx: GenericQueryCtx<DataModel>,
+  config: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >,
+) => toAuthContext(await getQueryUserResolver(config)(ctx));
 
-  if (!config.isAdmin(auth.user)) {
+const resolveMutationAuthContext = async <
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
+>(
+  ctx: GenericMutationCtx<DataModel>,
+  config: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >,
+) => toAuthContext(await getMutationUserResolver(config)(ctx));
+
+const resolveActionAuthContext = async <
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
+>(
+  ctx: GenericActionCtx<DataModel>,
+  config: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >,
+) => toAuthContext(await getActionUserResolver(config)(ctx));
+
+const assertAdmin = <User extends ConvexLibUser>(
+  auth: AuthContext<User>,
+  isAdmin: (user: User) => boolean,
+) => {
+  if (!isAdmin(auth.user)) {
     throw createError.forbidden('Admin access required');
   }
 
   return auth;
 };
 
-const resolveCapabilityContext = async <
+const getCapabilityCheckerForQuery = <
   User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
   TRegistry extends CapabilityRegistry,
 >(
-  ctx: AnyCtx,
-  config: CapabilityPrimitivesConfig<User, TRegistry>,
-  key: string & keyof TRegistry,
-) => {
-  const auth = await resolveAuthContext(ctx, config);
-  const role = auth.user.role;
-  const allowed = await config.capabilityChecker.has(ctx, role, key);
+  config: CapabilityPrimitivesConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility,
+    TRegistry
+  >,
+) =>
+  (config.capabilityCheckerQuery ??
+    config.capabilityChecker) as CapabilityChecker<
+    GenericQueryCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
 
-  if (!allowed) {
-    throw createError.unauthorized(`User lacks capability ${key}`);
-  }
-
-  return { ...auth, role };
-};
-
-const hasCapabilityChecker = <
+const getCapabilityCheckerForMutation = <
   User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
   TRegistry extends CapabilityRegistry,
 >(
-  config: ConvexLibConfig<User> | CapabilityPrimitivesConfig<User, TRegistry>,
-): config is CapabilityPrimitivesConfig<User, TRegistry> =>
-  'capabilityChecker' in config;
+  config: CapabilityPrimitivesConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility,
+    TRegistry
+  >,
+) =>
+  (config.capabilityCheckerMutation ??
+    config.capabilityChecker) as CapabilityChecker<
+    GenericMutationCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
 
-export function createPrimitives<User extends ConvexLibUser>(
-  config: ConvexLibConfig<User>,
-): ConvexLibPrimitives;
+const getCapabilityCheckerForAction = <
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel,
+  QueryVisibility extends FunctionVisibility,
+  MutationVisibility extends FunctionVisibility,
+  ActionVisibility extends FunctionVisibility,
+  TRegistry extends CapabilityRegistry,
+>(
+  config: CapabilityPrimitivesConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility,
+    TRegistry
+  >,
+) =>
+  (config.capabilityCheckerAction ??
+    config.capabilityChecker) as CapabilityChecker<
+    GenericActionCtx<DataModel>,
+    TRegistry,
+    User['role']
+  >;
+
 export function createPrimitives<
   User extends ConvexLibUser,
-  TRegistry extends CapabilityRegistry,
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
 >(
-  config: CapabilityPrimitivesConfig<User, TRegistry>,
-): ConvexLibPrimitives & CapabilityPrimitives<TRegistry>;
+  config: ConvexLibConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  >,
+): ConvexLibPrimitives<
+  User,
+  DataModel,
+  QueryVisibility,
+  MutationVisibility,
+  ActionVisibility
+>;
 export function createPrimitives<
   User extends ConvexLibUser,
-  TRegistry extends CapabilityRegistry,
->(config: ConvexLibConfig<User> | CapabilityPrimitivesConfig<User, TRegistry>) {
-  const authCtx = customCtx((ctx: AnyCtx) => resolveAuthContext(ctx, config));
-  const adminCtx = customCtx((ctx: AnyCtx) => resolveAdminContext(ctx, config));
-  const primitives: ConvexLibPrimitives = {
-    authQuery: customQuery(queryGeneric, authCtx),
-    authMutation: customMutation(mutationGeneric, authCtx),
-    authAction: customAction(actionGeneric, authCtx),
-    adminQuery: customQuery(queryGeneric, adminCtx),
-    adminMutation: customMutation(mutationGeneric, adminCtx),
-    adminAction: customAction(actionGeneric, adminCtx),
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+>(
+  config: CapabilityPrimitivesConfig<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility,
+    TRegistry
+  >,
+): ConvexLibPrimitives<
+  User,
+  DataModel,
+  QueryVisibility,
+  MutationVisibility,
+  ActionVisibility
+> &
+  CapabilityPrimitives<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility,
+    TRegistry
+  >;
+export function createPrimitives<
+  User extends ConvexLibUser,
+  DataModel extends GenericDataModel = GenericDataModel,
+  QueryVisibility extends FunctionVisibility = 'public',
+  MutationVisibility extends FunctionVisibility = 'public',
+  ActionVisibility extends FunctionVisibility = 'public',
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+>(
+  config:
+    | ConvexLibConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility
+      >
+    | CapabilityPrimitivesConfig<
+        User,
+        DataModel,
+        QueryVisibility,
+        MutationVisibility,
+        ActionVisibility,
+        TRegistry
+      >,
+) {
+  const builders = getBuilders(config);
+
+  const authQuery = customQuery(
+    builders.query,
+    customCtx((ctx: GenericQueryCtx<DataModel>) =>
+      resolveQueryAuthContext(ctx, config),
+    ),
+  );
+  const authMutation = customMutation(
+    builders.mutation,
+    customCtx((ctx: GenericMutationCtx<DataModel>) =>
+      resolveMutationAuthContext(ctx, config),
+    ),
+  );
+  const authAction = customAction(
+    builders.action,
+    customCtx((ctx: GenericActionCtx<DataModel>) =>
+      resolveActionAuthContext(ctx, config),
+    ),
+  );
+
+  const adminQuery = customQuery(
+    builders.query,
+    customCtx(async (ctx: GenericQueryCtx<DataModel>) =>
+      assertAdmin(await resolveQueryAuthContext(ctx, config), config.isAdmin),
+    ),
+  );
+  const adminMutation = customMutation(
+    builders.mutation,
+    customCtx(async (ctx: GenericMutationCtx<DataModel>) =>
+      assertAdmin(
+        await resolveMutationAuthContext(ctx, config),
+        config.isAdmin,
+      ),
+    ),
+  );
+  const adminAction = customAction(
+    builders.action,
+    customCtx(async (ctx: GenericActionCtx<DataModel>) =>
+      assertAdmin(await resolveActionAuthContext(ctx, config), config.isAdmin),
+    ),
+  );
+
+  const primitives: ConvexLibPrimitives<
+    User,
+    DataModel,
+    QueryVisibility,
+    MutationVisibility,
+    ActionVisibility
+  > = {
+    authQuery,
+    authMutation,
+    authAction,
+    adminQuery,
+    adminMutation,
+    adminAction,
   };
 
-  if (!hasCapabilityChecker(config)) {
+  if (!('capabilityChecker' in config)) {
     return primitives;
   }
 
+  const capabilityQuery = (key: CapabilityKey<TRegistry>) =>
+    customQuery(
+      builders.query,
+      customCtx(async (ctx: GenericQueryCtx<DataModel>) => {
+        const auth = await resolveQueryAuthContext(ctx, config);
+        const allowed = await getCapabilityCheckerForQuery(config).has(
+          ctx,
+          auth.role,
+          key,
+        );
+
+        if (!allowed) {
+          throw createError.unauthorized(`User lacks capability ${key}`);
+        }
+
+        return auth;
+      }),
+    );
+
+  const capabilityMutation = (key: CapabilityKey<TRegistry>) =>
+    customMutation(
+      builders.mutation,
+      customCtx(async (ctx: GenericMutationCtx<DataModel>) => {
+        const auth = await resolveMutationAuthContext(ctx, config);
+        const allowed = await getCapabilityCheckerForMutation(config).has(
+          ctx,
+          auth.role,
+          key,
+        );
+
+        if (!allowed) {
+          throw createError.unauthorized(`User lacks capability ${key}`);
+        }
+
+        return auth;
+      }),
+    );
+
+  const capabilityAction = (key: CapabilityKey<TRegistry>) =>
+    customAction(
+      builders.action,
+      customCtx(async (ctx: GenericActionCtx<DataModel>) => {
+        const auth = await resolveActionAuthContext(ctx, config);
+        const allowed = await getCapabilityCheckerForAction(config).has(
+          ctx,
+          auth.role,
+          key,
+        );
+
+        if (!allowed) {
+          throw createError.unauthorized(`User lacks capability ${key}`);
+        }
+
+        return auth;
+      }),
+    );
+
   return {
     ...primitives,
-    capabilityQuery: (key: string & keyof TRegistry) =>
-      customQuery(
-        queryGeneric,
-        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
-      ),
-    capabilityMutation: (key: string & keyof TRegistry) =>
-      customMutation(
-        mutationGeneric,
-        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
-      ),
-    capabilityAction: (key: string & keyof TRegistry) =>
-      customAction(
-        actionGeneric,
-        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
-      ),
+    capabilityQuery,
+    capabilityMutation,
+    capabilityAction,
   };
 }
 
-/**
- * Public (unauthenticated) query/mutation/action builders.
- *
- * Use these for intentionally public endpoints (e.g. tenant config, health checks).
- * They are thin wrappers around the generic Convex builders — their purpose is to
- * make the intent explicit and detectable by CI auth-enforcement checks.
- *
- * Any file importing from `_generated/server` directly should be flagged by CI.
- * Using `publicQuery` instead signals "this is intentionally unauthenticated".
- *
- * @example
- * ```ts
- * import { publicQuery } from '@amadeni/convex-lib';
- *
- * export const getTenantConfig = publicQuery({
- *   args: { subdomain: v.string() },
- *   handler: async (ctx, args) => {
- *     return await ctx.db.query('tenantConfig')
- *       .filter(q => q.eq(q.field('subdomain'), args.subdomain))
- *       .first();
- *   },
- * });
- * ```
- */
-export const publicQuery = queryGeneric;
-export const publicMutation = mutationGeneric;
-export const publicAction = actionGeneric;
+export { queryGeneric as publicQuery } from 'convex/server';
+export { mutationGeneric as publicMutation } from 'convex/server';
+export { actionGeneric as publicAction } from 'convex/server';

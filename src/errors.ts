@@ -36,10 +36,14 @@ export const createError = {
     new AppError(ErrorCode.FORBIDDEN, msg ?? 'Access forbidden'),
   inactiveUser: (msg?: string) =>
     new AppError(ErrorCode.INACTIVE_USER, msg ?? 'User account is inactive'),
-  notFound: (entity?: string) =>
+  notFound: (entity?: string, id?: string) =>
     new AppError(
       ErrorCode.NOT_FOUND,
-      entity ? `${entity} not found` : 'Resource not found',
+      entity
+        ? id
+          ? `${entity} ${id} not found`
+          : `${entity} not found`
+        : 'Resource not found',
     ),
   conflict: (msg?: string) =>
     new AppError(ErrorCode.CONFLICT, msg ?? 'Conflict'),

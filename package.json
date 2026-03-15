@@ -20,7 +20,7 @@
     "prepare": "tsc",
     "prepublishOnly": "pnpm run build",
     "lint": "eslint src/",
-    "ts": "tsc --noEmit --incremental false",
+    "ts": "tsc --noEmit --incremental false && tsc -p tsconfig.type-tests.json --noEmit",
     "prettier:check": "prettier --check .",
     "prettier:write": "prettier --write .",
     "check-spelling": "cspell '**/*.*' --no-progress",

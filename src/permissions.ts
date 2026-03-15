@@ -1,9 +1,15 @@
-import type { AnyCtx, ConvexLibUser } from './types';
+import type {
+  DocumentByName,
+  GenericDataModel,
+  TableNamesInDataModel,
+} from 'convex/server';
+import type { GenericId } from 'convex/values';
+import type { ConvexLibUser } from './types';
 
 export type PermissionAction = 'create' | 'read' | 'update' | 'delete';
 
-export interface PermissionEntry {
-  role: string;
+export interface PermissionEntry<Role extends string = string> {
+  role: Role;
   resource: string;
   create?: boolean;
   read?: boolean;
@@ -13,39 +19,78 @@ export interface PermissionEntry {
   ownership?: string;
 }
 
-export interface PermissionCheckerConfig {
-  getPermission: (
-    ctx: AnyCtx,
-    role: string,
+export interface PermissionCheckerConfig<
+  Ctx,
+  DataModel extends GenericDataModel = GenericDataModel,
+  Role extends string | undefined = string | undefined,
+> {
+  getPermission(
+    ctx: Ctx,
+    role: Role,
     resource: string,
-  ) => Promise<PermissionEntry | null>;
-  getDocument: (
-    ctx: AnyCtx,
-    table: string,
-    id: string,
-  ) => Promise<Record<string, unknown> | null>;
-  adminRoles?: string[];
+  ): Promise<PermissionEntry | null>;
+  getDocument<TableName extends TableNamesInDataModel<DataModel>>(
+    ctx: Ctx,
+    table: TableName,
+    id: GenericId<TableName>,
+  ): Promise<DocumentByName<DataModel, TableName> | null>;
+  adminRoles?: readonly Exclude<Role, undefined>[];
   defaultAllow?: boolean;
 }
 
-const DEFAULT_ADMIN_ROLES = ['admin'];
+export interface PermissionChecker<
+  Ctx,
+  DataModel extends GenericDataModel = GenericDataModel,
+  Role extends string | undefined = string | undefined,
+> {
+  hasPermission<User extends ConvexLibUser<Role>>(
+    ctx: Ctx,
+    user: User,
+    resource: string,
+    action: PermissionAction,
+  ): Promise<boolean>;
+  checkOwnership<TableName extends TableNamesInDataModel<DataModel>>(
+    ctx: Ctx,
+    userId: string,
+    table: TableName,
+    documentId: GenericId<TableName>,
+    role: Role,
+  ): Promise<boolean>;
+  getPermissionEntry(
+    ctx: Ctx,
+    role: Role,
+    resource: string,
+  ): Promise<PermissionEntry | null>;
+  getDocument<TableName extends TableNamesInDataModel<DataModel>>(
+    ctx: Ctx,
+    table: TableName,
+    id: GenericId<TableName>,
+  ): Promise<DocumentByName<DataModel, TableName> | null>;
+}
+
+const DEFAULT_ADMIN_ROLES = ['admin'] as const;
 const DEFAULT_OWNERSHIP_FIELD = 'createdBy';
 
-const matchesAdminRole = (role: string | undefined, adminRoles: string[]) =>
-  role !== undefined && adminRoles.includes(role);
+const matchesAdminRole = (
+  role: string | undefined,
+  adminRoles: readonly string[],
+) => role !== undefined && adminRoles.includes(role);
 
-export const createPermissionChecker = (config: PermissionCheckerConfig) => {
+export const createPermissionChecker = <
+  Ctx,
+  DataModel extends GenericDataModel = GenericDataModel,
+  Role extends string | undefined = string | undefined,
+>(
+  config: PermissionCheckerConfig<Ctx, DataModel, Role>,
+): PermissionChecker<Ctx, DataModel, Role> => {
   const adminRoles = config.adminRoles ?? DEFAULT_ADMIN_ROLES;
   const defaultAllow = config.defaultAllow ?? true;
 
-  const getPermissionEntry = async (
-    ctx: AnyCtx,
-    role: string | undefined,
-    resource: string,
-  ) => config.getPermission(ctx, role ?? 'default', resource);
+  const getPermissionEntry = async (ctx: Ctx, role: Role, resource: string) =>
+    config.getPermission(ctx, role, resource);
 
-  const hasPermission = async <User extends ConvexLibUser>(
-    ctx: AnyCtx,
+  const hasPermission = async <User extends ConvexLibUser<Role>>(
+    ctx: Ctx,
     user: User,
     resource: string,
     action: PermissionAction,
@@ -54,7 +99,11 @@ export const createPermissionChecker = (config: PermissionCheckerConfig) => {
       return true;
     }
 
-    const permission = await getPermissionEntry(ctx, user.role, resource);
+    const permission = await getPermissionEntry(
+      ctx,
+      user.role as Role,
+      resource,
+    );
     if (!permission) {
       return defaultAllow;
     }
@@ -62,12 +111,14 @@ export const createPermissionChecker = (config: PermissionCheckerConfig) => {
     return permission[action] === true;
   };
 
-  const checkOwnership = async (
-    ctx: AnyCtx,
+  const checkOwnership = async <
+    TableName extends TableNamesInDataModel<DataModel>,
+  >(
+    ctx: Ctx,
     userId: string,
-    table: string,
-    documentId: string,
-    role: string | undefined,
+    table: TableName,
+    documentId: GenericId<TableName>,
+    role: Role,
   ): Promise<boolean> => {
     if (matchesAdminRole(role, adminRoles)) {
       return true;
@@ -84,7 +135,7 @@ export const createPermissionChecker = (config: PermissionCheckerConfig) => {
     }
 
     const ownershipField = permission.ownership ?? DEFAULT_OWNERSHIP_FIELD;
-    const owner = doc[ownershipField];
+    const owner = doc[ownershipField as keyof typeof doc];
 
     if (owner === undefined) {
       return false;

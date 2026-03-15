@@ -1,5 +1,3 @@
-import type { AnyCtx } from './types';
-
 /**
  * A capability definition describes a single feature-level permission
  * with a label, category, and the roles that have it by default.
@@ -24,36 +22,39 @@ export interface CapabilityOverride {
  */
 export type CapabilityRegistry = Record<string, CapabilityDefinition>;
 
-/**
- * Configuration for creating a capability checker.
- */
-export interface CapabilityCheckerConfig<
-  TRegistry extends CapabilityRegistry = CapabilityRegistry,
-> {
-  /** The full registry of capability definitions */
-  registry: TRegistry;
-  /** How to look up a DB override for a capability key */
-  getOverride: (ctx: AnyCtx, key: string) => Promise<CapabilityOverride | null>;
-  /** Roles that always have all capabilities (default: ['admin']) */
-  adminRoles?: string[];
-}
-
 export type CapabilityKey<
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
 > = string & keyof TRegistry;
 
-export interface CapabilityChecker<
+/**
+ * Configuration for creating a capability checker.
+ */
+export interface CapabilityCheckerConfig<
+  Ctx,
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
+  Role extends string | undefined = string | undefined,
 > {
-  has: (
-    ctx: AnyCtx,
-    role: string | undefined,
+  /** The full registry of capability definitions */
+  registry: TRegistry;
+  /** How to look up a DB override for a capability key */
+  getOverride(
+    ctx: Ctx,
     key: CapabilityKey<TRegistry>,
-  ) => Promise<boolean>;
-  checkAll: (
-    ctx: AnyCtx,
-    role: string | undefined,
-  ) => Promise<Record<CapabilityKey<TRegistry>, boolean>>;
+  ): Promise<CapabilityOverride | null>;
+  /** Roles that always have all capabilities (default: ['admin']) */
+  adminRoles?: readonly Exclude<Role, undefined>[];
+}
+
+export interface CapabilityChecker<
+  Ctx,
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+  Role extends string | undefined = string | undefined,
+> {
+  has(ctx: Ctx, role: Role, key: CapabilityKey<TRegistry>): Promise<boolean>;
+  checkAll(
+    ctx: Ctx,
+    role: Role,
+  ): Promise<Record<CapabilityKey<TRegistry>, boolean>>;
   keys: readonly CapabilityKey<TRegistry>[];
   registry: TRegistry;
 }
@@ -66,77 +67,41 @@ export interface CapabilityChecker<
  *
  * Each capability has default roles defined in the registry.
  * These can be overridden per-deployment via DB entries.
- *
- * @example
- * ```ts
- * const capabilities = createCapabilityChecker({
- *   registry: {
- *     'invoice.manage': {
- *       label: 'Manage invoices',
- *       category: 'invoices',
- *       defaultRoles: ['accountant'],
- *     },
- *   },
- *   getOverride: async (ctx, key) => {
- *     return await ctx.db.query('capabilityOverrides')
- *       .withIndex('by_key', q => q.eq('key', key))
- *       .first();
- *   },
- * });
- *
- * // In a mutation handler:
- * if (await capabilities.has(ctx, user.role, 'invoice.manage')) { ... }
- * ```
  */
 export const createCapabilityChecker = <
+  Ctx,
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
+  Role extends string | undefined = string | undefined,
 >(
-  config: CapabilityCheckerConfig<TRegistry>,
-): CapabilityChecker<TRegistry> => {
+  config: CapabilityCheckerConfig<Ctx, TRegistry, Role>,
+): CapabilityChecker<Ctx, TRegistry, Role> => {
   const adminRoles = config.adminRoles ?? ['admin'];
 
   type Key = CapabilityKey<TRegistry>;
 
-  /**
-   * Check if a role has a specific capability.
-   * Admin roles always return true.
-   * DB overrides take precedence over registry defaults.
-   */
-  const has = async (
-    ctx: AnyCtx,
-    role: string | undefined,
-    key: Key,
-  ): Promise<boolean> => {
-    if (role !== undefined && adminRoles.includes(role)) {
+  const has = async (ctx: Ctx, role: Role, key: Key): Promise<boolean> => {
+    if (role !== undefined && adminRoles.includes(role as never)) {
       return true;
     }
 
-    const effectiveRole = role ?? 'default';
-
-    // Check for DB override first
+    const effectiveRole = (role ?? 'default') as string;
     const override = await config.getOverride(ctx, key);
+
     if (override) {
-      return (override.roles as readonly string[]).includes(effectiveRole);
+      return override.roles.includes(effectiveRole);
     }
 
-    // Fall back to registry defaults
     const definition = config.registry[key];
     if (!definition) {
       return false;
     }
 
-    return (definition.defaultRoles as readonly string[]).includes(
-      effectiveRole,
-    );
+    return definition.defaultRoles.includes(effectiveRole);
   };
 
-  /**
-   * Check all capabilities for a given role.
-   * Returns a record of capability key → boolean.
-   */
   const checkAll = async (
-    ctx: AnyCtx,
-    role: string | undefined,
+    ctx: Ctx,
+    role: Role,
   ): Promise<Record<Key, boolean>> => {
     const keys = Object.keys(config.registry) as Key[];
     const results = {} as Record<Key, boolean>;
@@ -148,15 +113,12 @@ export const createCapabilityChecker = <
     return results;
   };
 
-  /**
-   * Get all capability keys from the registry.
-   */
   const keys = Object.keys(config.registry) as readonly Key[];
 
-  /**
-   * Get the registry (for UI rendering, admin panels, etc.)
-   */
-  const registry = config.registry;
-
-  return { has, checkAll, keys, registry };
+  return {
+    has,
+    checkAll,
+    keys,
+    registry: config.registry,
+  };
 };
