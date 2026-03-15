@@ -5,13 +5,11 @@ import {
   customMutation,
   customQuery,
 } from 'convex-helpers/server/customFunctions';
+import type { CapabilityChecker, CapabilityRegistry } from './capabilities';
 import { createError } from './errors';
-import type { ConvexLibConfig, ConvexLibUser } from './types';
+import type { AnyCtx, ConvexLibConfig, ConvexLibUser } from './types';
 
 export type { ConvexLibConfig, ConvexLibUser } from './types';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyCtx = Record<string, any>;
 
 export interface ConvexLibPrimitives {
   authQuery: ReturnType<typeof customQuery>;
@@ -20,6 +18,27 @@ export interface ConvexLibPrimitives {
   adminQuery: ReturnType<typeof customQuery>;
   adminMutation: ReturnType<typeof customMutation>;
   adminAction: ReturnType<typeof customAction>;
+}
+
+export interface CapabilityPrimitives<
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+> {
+  capabilityQuery: (
+    key: string & keyof TRegistry,
+  ) => ReturnType<typeof customQuery>;
+  capabilityMutation: (
+    key: string & keyof TRegistry,
+  ) => ReturnType<typeof customMutation>;
+  capabilityAction: (
+    key: string & keyof TRegistry,
+  ) => ReturnType<typeof customAction>;
+}
+
+export interface CapabilityPrimitivesConfig<
+  User extends ConvexLibUser,
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+> extends ConvexLibConfig<User> {
+  capabilityChecker: CapabilityChecker<TRegistry>;
 }
 
 const resolveAuthContext = async <User extends ConvexLibUser>(
@@ -43,13 +62,49 @@ const resolveAdminContext = async <User extends ConvexLibUser>(
   return auth;
 };
 
-export const createPrimitives = <User extends ConvexLibUser>(
+const resolveCapabilityContext = async <
+  User extends ConvexLibUser,
+  TRegistry extends CapabilityRegistry,
+>(
+  ctx: AnyCtx,
+  config: CapabilityPrimitivesConfig<User, TRegistry>,
+  key: string & keyof TRegistry,
+) => {
+  const auth = await resolveAuthContext(ctx, config);
+  const role = auth.user.role;
+  const allowed = await config.capabilityChecker.has(ctx, role, key);
+
+  if (!allowed) {
+    throw createError.unauthorized(`User lacks capability ${key}`);
+  }
+
+  return { ...auth, role };
+};
+
+const hasCapabilityChecker = <
+  User extends ConvexLibUser,
+  TRegistry extends CapabilityRegistry,
+>(
+  config: ConvexLibConfig<User> | CapabilityPrimitivesConfig<User, TRegistry>,
+): config is CapabilityPrimitivesConfig<User, TRegistry> =>
+  'capabilityChecker' in config;
+
+export function createPrimitives<User extends ConvexLibUser>(
   config: ConvexLibConfig<User>,
-): ConvexLibPrimitives => {
+): ConvexLibPrimitives;
+export function createPrimitives<
+  User extends ConvexLibUser,
+  TRegistry extends CapabilityRegistry,
+>(
+  config: CapabilityPrimitivesConfig<User, TRegistry>,
+): ConvexLibPrimitives & CapabilityPrimitives<TRegistry>;
+export function createPrimitives<
+  User extends ConvexLibUser,
+  TRegistry extends CapabilityRegistry,
+>(config: ConvexLibConfig<User> | CapabilityPrimitivesConfig<User, TRegistry>) {
   const authCtx = customCtx((ctx: AnyCtx) => resolveAuthContext(ctx, config));
   const adminCtx = customCtx((ctx: AnyCtx) => resolveAdminContext(ctx, config));
-
-  return {
+  const primitives: ConvexLibPrimitives = {
     authQuery: customQuery(queryGeneric, authCtx),
     authMutation: customMutation(mutationGeneric, authCtx),
     authAction: customAction(actionGeneric, authCtx),
@@ -57,7 +112,30 @@ export const createPrimitives = <User extends ConvexLibUser>(
     adminMutation: customMutation(mutationGeneric, adminCtx),
     adminAction: customAction(actionGeneric, adminCtx),
   };
-};
+
+  if (!hasCapabilityChecker(config)) {
+    return primitives;
+  }
+
+  return {
+    ...primitives,
+    capabilityQuery: (key: string & keyof TRegistry) =>
+      customQuery(
+        queryGeneric,
+        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
+      ),
+    capabilityMutation: (key: string & keyof TRegistry) =>
+      customMutation(
+        mutationGeneric,
+        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
+      ),
+    capabilityAction: (key: string & keyof TRegistry) =>
+      customAction(
+        actionGeneric,
+        customCtx((ctx: AnyCtx) => resolveCapabilityContext(ctx, config, key)),
+      ),
+  };
+}
 
 /**
  * Public (unauthenticated) query/mutation/action builders.

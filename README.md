@@ -53,6 +53,12 @@ export const {
 
 All six helpers resolve your user through `resolveUser`. They add `ctx.user` and `ctx.userId` to the handler context, and the `admin*` variants also enforce `isAdmin(user)`.
 
+If you also pass a `capabilityChecker`, `createPrimitives` returns three additional helpers:
+
+- `capabilityQuery(capability)`: Query that requires the authenticated user to have a specific capability.
+- `capabilityMutation(capability)`: Mutation that requires the authenticated user to have a specific capability.
+- `capabilityAction(capability)`: Action that requires the authenticated user to have a specific capability.
+
 ## Usage
 
 ```ts

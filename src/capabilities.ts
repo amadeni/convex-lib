@@ -38,6 +38,26 @@ export interface CapabilityCheckerConfig<
   adminRoles?: string[];
 }
 
+export type CapabilityKey<
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+> = string & keyof TRegistry;
+
+export interface CapabilityChecker<
+  TRegistry extends CapabilityRegistry = CapabilityRegistry,
+> {
+  has: (
+    ctx: AnyCtx,
+    role: string | undefined,
+    key: CapabilityKey<TRegistry>,
+  ) => Promise<boolean>;
+  checkAll: (
+    ctx: AnyCtx,
+    role: string | undefined,
+  ) => Promise<Record<CapabilityKey<TRegistry>, boolean>>;
+  keys: readonly CapabilityKey<TRegistry>[];
+  registry: TRegistry;
+}
+
 /**
  * Creates a capability checker from a registry and a DB lookup function.
  *
@@ -72,10 +92,10 @@ export const createCapabilityChecker = <
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
 >(
   config: CapabilityCheckerConfig<TRegistry>,
-) => {
+): CapabilityChecker<TRegistry> => {
   const adminRoles = config.adminRoles ?? ['admin'];
 
-  type Key = string & keyof TRegistry;
+  type Key = CapabilityKey<TRegistry>;
 
   /**
    * Check if a role has a specific capability.

@@ -85,6 +85,41 @@ describe('createPrimitives', () => {
       adminAction: expect.any(Function),
     });
   });
+
+  it('returns capability builders when a capability checker is provided', () => {
+    const capabilityChecker = createCapabilityChecker({
+      registry: {
+        'invoice.manage': {
+          label: 'Manage invoices',
+          category: 'invoices',
+          defaultRoles: ['admin'] as const,
+        },
+      },
+      getOverride: async () => null,
+    });
+
+    const primitives = createPrimitives({
+      resolveUser: async () => ({
+        _id: 'user_123',
+        email: 'test@example.com',
+        role: 'admin',
+      }),
+      isAdmin: user => user.role === 'admin',
+      capabilityChecker,
+    });
+
+    expect(primitives).toMatchObject({
+      authQuery: expect.any(Function),
+      authMutation: expect.any(Function),
+      authAction: expect.any(Function),
+      adminQuery: expect.any(Function),
+      adminMutation: expect.any(Function),
+      adminAction: expect.any(Function),
+      capabilityQuery: expect.any(Function),
+      capabilityMutation: expect.any(Function),
+      capabilityAction: expect.any(Function),
+    });
+  });
 });
 
 describe('public builders', () => {
