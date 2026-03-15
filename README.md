@@ -28,6 +28,7 @@ import {
   createConvexLib,
   createError,
   createPermissionCheckerFromCapabilities,
+  typedRef,
 } from '@amadeni/convex-lib';
 import { action, mutation, query } from './_generated/server';
 
@@ -43,12 +44,7 @@ const capabilityRegistry = {
     label: 'Manage posts',
     category: 'content',
     defaultRoles: ['admin', 'editor'] as const,
-    grants: {
-      posts: {
-        read: true as const,
-        update: true as const,
-      },
-    },
+    grants: [{ resource: 'posts', actions: ['read', 'update'] as const }],
   },
   'posts.delete': {
     label: 'Delete posts',
@@ -62,9 +58,7 @@ const capabilityRegistry = {
   },
 };
 
-const resolveUser = async (
-  ctx: typeof query._handlerCtx | typeof mutation._handlerCtx,
-) => {
+const resolveUser = async ctx => {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     throw createError.unauthenticated();
@@ -106,14 +100,20 @@ const permissionChecker = createPermissionCheckerFromCapabilities({
 
 const actionRuntime = createActionResolvers({
   registry: capabilityRegistry,
-  getUserRef: getUserBySubjectRef,
-  getUserArgs: async ctx => {
+  resolveUser: async ctx => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw createError.unauthenticated();
     }
 
-    return { subject: identity.subject };
+    const user = await ctx.runQuery(typedRef(getUserBySubjectRef), {
+      subject: identity.subject,
+    });
+    if (!user) {
+      throw createError.notFound('users', identity.subject);
+    }
+
+    return user;
   },
   getCapabilityOverrideRef,
   getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
@@ -156,6 +156,7 @@ export const {
 ```
 
 This keeps the app-specific Convex types from `_generated/server` intact, so wrapped handlers still behave like your real `QueryCtx`, `MutationCtx`, and `ActionCtx`.
+Direct destructuring from `createConvexLib(...)` is supported in strict TypeScript projects, so you should not need an intermediate typed constant just to export the primitives.
 
 ## Composer
 
@@ -193,10 +194,16 @@ Actions often cannot use `ctx.db` directly the same way as queries and mutations
 ```ts
 const actionRuntime = createActionResolvers({
   registry: capabilityRegistry,
-  getUserRef,
-  getUserArgs: async ctx => ({
-    subject: (await ctx.auth.getUserIdentity())?.subject,
-  }),
+  resolveUser: async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw createError.unauthenticated();
+    }
+
+    return await ctx.runQuery(typedRef(getUserBySubjectRef), {
+      subject: identity.subject,
+    });
+  },
   getCapabilityOverrideRef,
   getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
   getPermissionRef,
@@ -210,11 +217,11 @@ It returns:
 - `capabilityChecker` when `registry` and `getCapabilityOverrideRef` are provided
 - `permissionChecker` when `getPermissionRef` is provided
 
-That object can be passed directly to `runtime.action`.
+Use direct `resolveUser` when your action user lookup depends on async auth state. Use `getUserRef` plus `getUserArgs` when your app already has a reusable internal query for that lookup. Both paths can be passed directly to `runtime.action`.
 
 ## Capabilities To CRUD
 
-If your app derives CRUD authorization from capability grants plus capability overrides, use `createPermissionCheckerFromCapabilities(...)`.
+If your app derives CRUD authorization from capability grants plus capability overrides, `createPermissionCheckerFromCapabilities(...)` is the preferred path. Use `createPermissionChecker(...)` only when your app already stores explicit CRUD permission entries and does not derive them from capabilities.
 
 Add `grants` to capability definitions:
 
@@ -230,6 +237,19 @@ const capabilityRegistry = {
         update: true as const,
       },
     },
+  },
+};
+```
+
+Array-style grants are supported too:
+
+```ts
+const capabilityRegistry = {
+  'posts.manage': {
+    label: 'Manage posts',
+    category: 'content',
+    defaultRoles: ['editor'] as const,
+    grants: [{ resource: 'posts', actions: ['read', 'update'] as const }],
   },
 };
 ```
@@ -260,7 +280,22 @@ Recommended pattern:
 
 1. Keep generated builders like `query`, `mutation`, and `action` inside `convex/lib.ts`.
 2. Keep function refs used by action bridges in a file outside `convex/`, for example `src/lib/convex-refs.ts`.
-3. Import those refs into `convex/lib.ts`.
+3. Wrap exported refs with `typedRef(...)` in that external file when you want an explicit type barrier without writing verbose `FunctionReference<...>` annotations.
+4. Import those refs into `convex/lib.ts`.
+
+Example:
+
+```ts
+import { typedRef } from '@amadeni/convex-lib';
+import { internal } from '../convex/_generated/api';
+
+export const getUserBySubjectRef = typedRef(
+  internal.users.internal.getBySubject,
+);
+export const getCapabilityOverrideRef = typedRef(
+  internal.capabilities.internal.getOverride,
+);
+```
 
 That keeps the setup typed without feeding `convex/_generated/api` back into the same module graph being generated.
 

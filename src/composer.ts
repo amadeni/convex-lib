@@ -64,37 +64,42 @@ const missingCapabilityMethods = () => {
   );
 };
 
-export type ConvexLibComposerResult<
+const missingCapabilityPrimitive = <T>(): T =>
+  ((..._args: unknown[]) => missingCapabilityMethods()) as T;
+
+export interface ConvexLibComposerResult<
   User extends ConvexLibUser,
   DataModel extends GenericDataModel = GenericDataModel,
   QueryVisibility extends FunctionVisibility = 'public',
   MutationVisibility extends FunctionVisibility = 'public',
   ActionVisibility extends FunctionVisibility = 'public',
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
-> = ConvexLibPrimitives<
-  User,
-  DataModel,
-  QueryVisibility,
-  MutationVisibility,
-  ActionVisibility
-> &
-  AuthorizedPrimitives<
-    User,
-    DataModel,
-    QueryVisibility,
-    MutationVisibility,
-    ActionVisibility
-  > &
-  CapabilityPrimitives<
-    User,
-    DataModel,
-    QueryVisibility,
-    MutationVisibility,
-    ActionVisibility,
-    TRegistry
-  >;
+>
+  extends
+    ConvexLibPrimitives<
+      User,
+      DataModel,
+      QueryVisibility,
+      MutationVisibility,
+      ActionVisibility
+    >,
+    AuthorizedPrimitives<
+      User,
+      DataModel,
+      QueryVisibility,
+      MutationVisibility,
+      ActionVisibility
+    >,
+    CapabilityPrimitives<
+      User,
+      DataModel,
+      QueryVisibility,
+      MutationVisibility,
+      ActionVisibility,
+      TRegistry
+    > {}
 
-export const createConvexLib = <
+export function createConvexLib<
   User extends ConvexLibUser,
   DataModel extends GenericDataModel = GenericDataModel,
   QueryVisibility extends FunctionVisibility = 'public',
@@ -117,9 +122,11 @@ export const createConvexLib = <
   MutationVisibility,
   ActionVisibility,
   TRegistry
-> => {
-  const primitives = createPrimitives(config) as Partial<
-    ConvexLibComposerResult<
+> {
+  const primitives = createPrimitives(config);
+  const authorized = createAuthorized(config);
+  const capabilityPrimitives = primitives as Partial<
+    CapabilityPrimitives<
       User,
       DataModel,
       QueryVisibility,
@@ -128,21 +135,64 @@ export const createConvexLib = <
       TRegistry
     >
   >;
-  const authorized = createAuthorized(config);
+  const capabilityQuery = capabilityPrimitives.capabilityQuery
+    ? capabilityPrimitives.capabilityQuery
+    : missingCapabilityPrimitive<
+        ConvexLibComposerResult<
+          User,
+          DataModel,
+          QueryVisibility,
+          MutationVisibility,
+          ActionVisibility,
+          TRegistry
+        >['capabilityQuery']
+      >();
+  const capabilityMutation = capabilityPrimitives.capabilityMutation
+    ? capabilityPrimitives.capabilityMutation
+    : missingCapabilityPrimitive<
+        ConvexLibComposerResult<
+          User,
+          DataModel,
+          QueryVisibility,
+          MutationVisibility,
+          ActionVisibility,
+          TRegistry
+        >['capabilityMutation']
+      >();
+  const capabilityAction = capabilityPrimitives.capabilityAction
+    ? capabilityPrimitives.capabilityAction
+    : missingCapabilityPrimitive<
+        ConvexLibComposerResult<
+          User,
+          DataModel,
+          QueryVisibility,
+          MutationVisibility,
+          ActionVisibility,
+          TRegistry
+        >['capabilityAction']
+      >();
 
-  return {
-    ...primitives,
-    ...authorized,
-    capabilityQuery: primitives.capabilityQuery ?? missingCapabilityMethods,
-    capabilityMutation:
-      primitives.capabilityMutation ?? missingCapabilityMethods,
-    capabilityAction: primitives.capabilityAction ?? missingCapabilityMethods,
-  } as ConvexLibComposerResult<
+  const result: ConvexLibComposerResult<
     User,
     DataModel,
     QueryVisibility,
     MutationVisibility,
     ActionVisibility,
     TRegistry
-  >;
-};
+  > = {
+    authQuery: primitives.authQuery,
+    authMutation: primitives.authMutation,
+    authAction: primitives.authAction,
+    adminQuery: primitives.adminQuery,
+    adminMutation: primitives.adminMutation,
+    adminAction: primitives.adminAction,
+    capabilityQuery,
+    capabilityMutation,
+    capabilityAction,
+    authorizedQuery: authorized.authorizedQuery,
+    authorizedMutation: authorized.authorizedMutation,
+    authorizedAction: authorized.authorizedAction,
+  };
+
+  return result;
+}

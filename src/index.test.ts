@@ -224,7 +224,7 @@ describe('createPermissionChecker', () => {
   });
 });
 
-describe('createPermissionCheckerFromCapabilities', () => {
+describe('createPermissionCheckerFromCapabilities array grants', () => {
   it('derives CRUD permissions from capability grants', async () => {
     const checker = createPermissionCheckerFromCapabilities({
       registry: {
@@ -334,6 +334,14 @@ describe('createActionResolvers', () => {
 
         return null;
       },
+      runMutation: async () => null,
+      runAction: async () => null,
+      scheduler: {} as never,
+      auth: {
+        getUserIdentity: async () => null,
+      },
+      storage: {} as never,
+      vectorSearch: async () => [],
     };
 
     await expect(actionRuntime.resolveUser?.(ctx)).resolves.toEqual({
@@ -352,6 +360,41 @@ describe('createActionResolvers', () => {
         'read',
       ),
     ).resolves.toBe(true);
+  });
+
+  it('supports direct async action user resolution without helper queries', async () => {
+    const actionRuntime = createActionResolvers({
+      resolveUser: async ctx => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) {
+          throw createError.unauthenticated();
+        }
+
+        return {
+          _id: identity.subject,
+          email: 'editor@example.com',
+          role: 'editor' as const,
+        };
+      },
+    });
+
+    const ctx = {
+      auth: {
+        getUserIdentity: async () => ({ subject: 'user_1' }),
+      },
+      runQuery: async () => null,
+      runMutation: async () => null,
+      runAction: async () => null,
+      scheduler: {} as never,
+      storage: {} as never,
+      vectorSearch: async () => [],
+    };
+
+    await expect(actionRuntime.resolveUser?.(ctx)).resolves.toEqual({
+      _id: 'user_1',
+      email: 'editor@example.com',
+      role: 'editor',
+    });
   });
 });
 
@@ -523,5 +566,39 @@ describe('createCapabilityChecker', () => {
       'client.create',
       'system.config',
     ]);
+  });
+});
+
+describe('createPermissionCheckerFromCapabilities', () => {
+  it('supports array-based capability grants', async () => {
+    const checker = createPermissionCheckerFromCapabilities({
+      registry: {
+        'posts.manage': {
+          label: 'Manage posts',
+          category: 'posts',
+          defaultRoles: ['editor'] as const,
+          grants: [{ resource: 'posts', actions: ['read', 'update'] as const }],
+        },
+      },
+      getOverride: async () => null,
+      getDocument: async () => null,
+    });
+
+    await expect(
+      checker.hasPermission(
+        {},
+        { _id: 'user_1', role: 'editor' as const },
+        'posts',
+        'read',
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      checker.hasPermission(
+        {},
+        { _id: 'user_1', role: 'editor' as const },
+        'posts',
+        'delete',
+      ),
+    ).resolves.toBe(false);
   });
 });

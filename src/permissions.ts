@@ -9,6 +9,7 @@ import {
   type CapabilityCheckerConfig,
   type CapabilityCrudAction,
   type CapabilityRegistry,
+  normalizeCapabilityGrants,
 } from './capabilities';
 import type { ConvexLibUser } from './types';
 
@@ -199,6 +200,14 @@ export const createPermissionCheckerFromCapabilities = <
     'update',
     'delete',
   ];
+  const normalizedRegistry = Object.fromEntries(
+    Object.entries(config.registry).map(([key, definition]) => [
+      key,
+      normalizeCapabilityGrants(definition.grants),
+    ]),
+  ) as Partial<
+    Record<keyof TRegistry, ReturnType<typeof normalizeCapabilityGrants>>
+  >;
 
   return createPermissionChecker({
     adminRoles: config.adminRoles,
@@ -213,11 +222,12 @@ export const createPermissionCheckerFromCapabilities = <
       let sawAnyGrant = false;
       let sawOwnGrant = false;
       let sawFullGrant = false;
+      let ownership: string | undefined;
 
-      for (const [key, definition] of Object.entries(config.registry) as Array<
+      for (const [key] of Object.entries(config.registry) as Array<
         [string & keyof TRegistry, TRegistry[keyof TRegistry]]
       >) {
-        const grants = definition.grants?.[resource];
+        const grants = normalizedRegistry[key]?.[resource];
         if (!grants) {
           continue;
         }
@@ -238,6 +248,7 @@ export const createPermissionCheckerFromCapabilities = <
 
           if (grant === 'own') {
             sawOwnGrant = true;
+            ownership ??= grants.ownership;
           } else {
             sawFullGrant = true;
           }
@@ -251,7 +262,7 @@ export const createPermissionCheckerFromCapabilities = <
       if (sawOwnGrant && !sawFullGrant) {
         entry.ownOnly = true;
         entry.ownership =
-          ownershipByResource[resource] ?? DEFAULT_OWNERSHIP_FIELD;
+          ownership ?? ownershipByResource[resource] ?? DEFAULT_OWNERSHIP_FIELD;
       }
 
       return entry;

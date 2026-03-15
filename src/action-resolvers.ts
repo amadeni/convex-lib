@@ -1,6 +1,7 @@
 import type {
   FunctionReference,
   FunctionReturnType,
+  GenericActionCtx,
   OptionalRestArgs,
 } from 'convex/server';
 import type { GenericDataModel } from 'convex/server';
@@ -8,7 +9,11 @@ import type { CapabilityRegistry, CapabilityOverride } from './capabilities';
 import { createCapabilityChecker } from './capabilities';
 import type { PermissionEntry, PermissionChecker } from './permissions';
 import { createPermissionChecker } from './permissions';
-import type { ConvexLibUser, RuntimeResolverConfigEntry } from './types';
+import type {
+  ConvexLibUser,
+  MaybePromise,
+  RuntimeResolverConfigEntry,
+} from './types';
 
 type QueryRef<
   Args extends Record<string, unknown> = Record<string, unknown>,
@@ -17,12 +22,16 @@ type QueryRef<
 
 type AnyQueryRef = QueryRef<Record<string, unknown>, unknown>;
 
-type ActionContextWithRunQuery = {
-  runQuery: <Ref extends AnyQueryRef>(
-    ref: Ref,
-    ...args: OptionalRestArgs<Ref>
-  ) => Promise<FunctionReturnType<Ref>>;
-};
+type ActionContextWithRunQuery = Pick<
+  GenericActionCtx<GenericDataModel>,
+  | 'runQuery'
+  | 'runMutation'
+  | 'runAction'
+  | 'scheduler'
+  | 'auth'
+  | 'storage'
+  | 'vectorSearch'
+>;
 
 const runQueryRef = async <
   Ctx extends ActionContextWithRunQuery,
@@ -45,8 +54,8 @@ const runQueryRef = async <
 };
 
 export interface CreateActionResolversConfig<
-  ActionCtx extends ActionContextWithRunQuery,
   User extends ConvexLibUser,
+  ActionCtx extends ActionContextWithRunQuery = ActionContextWithRunQuery,
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
   UserRef extends QueryRef<Record<string, unknown>, User> = QueryRef<
     Record<string, unknown>,
@@ -61,40 +70,45 @@ export interface CreateActionResolversConfig<
     PermissionEntry | null
   > = QueryRef<Record<string, unknown>, PermissionEntry | null>,
 > {
-  getUserRef: UserRef;
-  getUserArgs?: (ctx: ActionCtx) => Record<string, unknown> | undefined;
+  resolveUser?: (ctx: ActionCtx) => MaybePromise<User>;
+  getUserRef?: UserRef;
+  getUserArgs?: (
+    ctx: ActionCtx,
+  ) => MaybePromise<Record<string, unknown> | undefined>;
   registry?: TRegistry;
   getCapabilityOverrideRef?: CapabilityOverrideRef;
   getCapabilityOverrideArgs?: (
     ctx: ActionCtx,
     key: string & keyof TRegistry,
-  ) => Record<string, unknown> | undefined;
+  ) => MaybePromise<Record<string, unknown> | undefined>;
   getPermissionRef?: PermissionRef;
   getPermissionArgs?: (
     ctx: ActionCtx,
     role: User['role'],
     resource: string,
-  ) => Record<string, unknown> | undefined;
+  ) => MaybePromise<Record<string, unknown> | undefined>;
   adminRoles?: readonly Exclude<User['role'], undefined>[];
   defaultAllow?: boolean;
 }
 
 export interface ActionRuntimeResolvers<
-  ActionCtx extends ActionContextWithRunQuery,
   User extends ConvexLibUser,
-  DataModel extends GenericDataModel = GenericDataModel,
+  ActionCtx extends ActionContextWithRunQuery = ActionContextWithRunQuery,
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
 > extends RuntimeResolverConfigEntry<ActionCtx, User> {
   capabilityChecker?: ReturnType<
     typeof createCapabilityChecker<ActionCtx, TRegistry, User['role']>
   >;
-  permissionChecker?: PermissionChecker<ActionCtx, DataModel, User['role']>;
+  permissionChecker?: PermissionChecker<
+    ActionCtx,
+    GenericDataModel,
+    User['role']
+  >;
 }
 
 export const createActionResolvers = <
-  ActionCtx extends ActionContextWithRunQuery,
   User extends ConvexLibUser,
-  DataModel extends GenericDataModel = GenericDataModel,
+  ActionCtx extends ActionContextWithRunQuery = ActionContextWithRunQuery,
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
   UserRef extends QueryRef<Record<string, unknown>, User> = QueryRef<
     Record<string, unknown>,
@@ -110,16 +124,30 @@ export const createActionResolvers = <
   > = QueryRef<Record<string, unknown>, PermissionEntry | null>,
 >(
   config: CreateActionResolversConfig<
-    ActionCtx,
     User,
+    ActionCtx,
     TRegistry,
     UserRef,
     CapabilityOverrideRef,
     PermissionRef
   >,
-): ActionRuntimeResolvers<ActionCtx, User, DataModel, TRegistry> => {
-  const resolveUser = async (ctx: ActionCtx) =>
-    runQueryRef(ctx, config.getUserRef, config.getUserArgs?.(ctx));
+): ActionRuntimeResolvers<User, ActionCtx, TRegistry> => {
+  const directResolveUser = config.resolveUser;
+  const resolveUser = directResolveUser
+    ? async (ctx: ActionCtx) => directResolveUser(ctx)
+    : async (ctx: ActionCtx) => {
+        if (!config.getUserRef) {
+          throw new Error(
+            'createActionResolvers requires either `resolveUser` or `getUserRef`.',
+          );
+        }
+
+        return runQueryRef(
+          ctx,
+          config.getUserRef,
+          await config.getUserArgs?.(ctx),
+        );
+      };
 
   const capabilityChecker =
     config.registry && config.getCapabilityOverrideRef
@@ -129,11 +157,11 @@ export const createActionResolvers = <
           return createCapabilityChecker<ActionCtx, TRegistry, User['role']>({
             registry: config.registry,
             adminRoles: config.adminRoles,
-            getOverride: (ctx, key) =>
+            getOverride: async (ctx, key) =>
               runQueryRef(
                 ctx,
                 capabilityOverrideRef,
-                config.getCapabilityOverrideArgs?.(ctx, key),
+                await config.getCapabilityOverrideArgs?.(ctx, key),
               ),
           });
         })()
@@ -143,15 +171,19 @@ export const createActionResolvers = <
     ? (() => {
         const permissionRef = config.getPermissionRef;
 
-        return createPermissionChecker<ActionCtx, DataModel, User['role']>({
+        return createPermissionChecker<
+          ActionCtx,
+          GenericDataModel,
+          User['role']
+        >({
           adminRoles: config.adminRoles,
           defaultAllow: config.defaultAllow,
           getDocument: async () => null,
-          getPermission: (ctx, role, resource) =>
+          getPermission: async (ctx, role, resource) =>
             runQueryRef(
               ctx,
               permissionRef,
-              config.getPermissionArgs?.(ctx, role, resource),
+              await config.getPermissionArgs?.(ctx, role, resource),
             ),
         });
       })()

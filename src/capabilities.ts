@@ -6,6 +6,27 @@ export type CapabilityResourceGrants = Partial<
   Record<string, Partial<Record<CapabilityCrudAction, CapabilityCrudGrant>>>
 >;
 
+export interface CapabilityArrayGrant {
+  resource: string;
+  actions: readonly CapabilityCrudAction[];
+  grant?: CapabilityCrudGrant;
+  ownership?: string;
+}
+
+export type CapabilityGrants =
+  | CapabilityResourceGrants
+  | readonly CapabilityArrayGrant[];
+
+export type NormalizedCapabilityResourceGrant = Partial<
+  Record<CapabilityCrudAction, CapabilityCrudGrant>
+> & {
+  ownership?: string;
+};
+
+export type NormalizedCapabilityGrants = Partial<
+  Record<string, NormalizedCapabilityResourceGrant>
+>;
+
 /**
  * A capability definition describes a single feature-level permission
  * with a label, category, and the roles that have it by default.
@@ -14,7 +35,7 @@ export interface CapabilityDefinition {
   label: string;
   category: string;
   defaultRoles: readonly string[];
-  grants?: CapabilityResourceGrants;
+  grants?: CapabilityGrants;
 }
 
 /**
@@ -34,6 +55,36 @@ export type CapabilityRegistry = Record<string, CapabilityDefinition>;
 export type CapabilityKey<
   TRegistry extends CapabilityRegistry = CapabilityRegistry,
 > = string & keyof TRegistry;
+
+export const normalizeCapabilityGrants = (
+  grants?: CapabilityGrants,
+): NormalizedCapabilityGrants => {
+  if (!grants) {
+    return {};
+  }
+
+  if (!Array.isArray(grants)) {
+    return grants as NormalizedCapabilityGrants;
+  }
+
+  const normalized: NormalizedCapabilityGrants = {};
+
+  for (const entry of grants) {
+    const current = normalized[entry.resource] ?? {};
+
+    for (const action of entry.actions as readonly CapabilityCrudAction[]) {
+      current[action] = entry.grant ?? true;
+    }
+
+    if (entry.ownership) {
+      current.ownership = entry.ownership;
+    }
+
+    normalized[entry.resource] = current;
+  }
+
+  return normalized;
+};
 
 /**
  * Configuration for creating a capability checker.

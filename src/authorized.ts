@@ -177,7 +177,7 @@ export interface AuthorizedConfig<
     >['action'] & {
       permissionChecker?: PermissionChecker<
         GenericActionCtx<DataModel>,
-        DataModel,
+        GenericDataModel,
         User['role']
       >;
     };
@@ -201,7 +201,7 @@ export interface AuthorizedConfig<
   >;
   permissionCheckerAction?: PermissionChecker<
     GenericActionCtx<DataModel>,
-    DataModel,
+    GenericDataModel,
     User['role']
   >;
 }
@@ -318,7 +318,7 @@ const getPermissionCheckerForAction = <
 
     return checker as PermissionChecker<
       GenericActionCtx<DataModel>,
-      DataModel,
+      GenericDataModel,
       User['role']
     >;
   })();

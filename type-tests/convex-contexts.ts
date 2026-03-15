@@ -6,7 +6,6 @@ import {
 } from 'convex/server';
 import type {
   ActionBuilder,
-  FunctionReference,
   GenericActionCtx,
   GenericMutationCtx,
   GenericQueryCtx,
@@ -23,6 +22,7 @@ import {
   createPermissionChecker,
   createPermissionCheckerFromCapabilities,
   createPrimitives,
+  typedRef,
 } from '../src';
 
 type AppDataModel = {
@@ -112,12 +112,7 @@ const capabilityRegistry = {
     label: 'Manage invoices',
     category: 'billing',
     defaultRoles: ['admin'] as const,
-    grants: {
-      posts: {
-        read: true as const,
-        update: true as const,
-      },
-    },
+    grants: [{ resource: 'posts', actions: ['read', 'update'] as const }],
   },
 };
 
@@ -307,42 +302,56 @@ authorized.authorizedAction('posts')({
   },
 });
 
-const actionRuntime = createActionResolvers<
-  AppActionCtx,
-  AppUser,
-  AppDataModel,
-  typeof capabilityRegistry
->({
+export const actionRuntime = createActionResolvers({
   registry: capabilityRegistry,
-  getUserRef: makeFunctionReference<'query', { email: string }, AppUser>(
-    'internal.users.getByEmail',
-  ) as FunctionReference<'query', 'public', { email: string }, AppUser>,
-  getUserArgs: () => ({ email: 'admin@example.com' }),
-  getCapabilityOverrideRef: makeFunctionReference<
-    'query',
-    { key: string },
-    { key: string; roles: string[] } | null
-  >('internal.capabilities.getOverride') as FunctionReference<
-    'query',
-    'public',
-    { key: string },
-    { key: string; roles: string[] } | null
-  >,
+  getUserRef: typedRef(
+    makeFunctionReference<'query', { email: string }, AppUser>(
+      'internal.users.getByEmail',
+    ),
+  ),
+  getUserArgs: async () => ({ email: 'admin@example.com' }),
+  getCapabilityOverrideRef: typedRef(
+    makeFunctionReference<
+      'query',
+      { key: string },
+      { key: string; roles: string[] } | null
+    >('internal.capabilities.getOverride'),
+  ),
   getCapabilityOverrideArgs: (_ctx, key) => ({ key }),
-  getPermissionRef: makeFunctionReference<
-    'query',
-    { role: AppUser['role']; resource: string },
-    { role: string; resource: string; read?: boolean; update?: boolean } | null
-  >('internal.permissions.getEntry') as FunctionReference<
-    'query',
-    'public',
-    { role: AppUser['role']; resource: string },
-    { role: string; resource: string; read?: boolean; update?: boolean } | null
-  >,
+  getPermissionRef: typedRef(
+    makeFunctionReference<
+      'query',
+      { role: AppUser['role']; resource: string },
+      {
+        role: string;
+        resource: string;
+        read?: boolean;
+        update?: boolean;
+      } | null
+    >('internal.permissions.getEntry'),
+  ),
   getPermissionArgs: (_ctx, role, resource) => ({ role, resource }),
 });
 
-const {
+export const actionRuntimeDirect = createActionResolvers({
+  resolveUser: async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw createError.unauthenticated();
+    }
+
+    return {
+      _id: identity.subject as GenericId<'users'>,
+      _creationTime: 0,
+      email: 'admin@example.com',
+      role: 'admin' as const,
+    };
+  },
+});
+
+actionRuntimeDirect.resolveUser;
+
+export const {
   authQuery: composedAuthQuery,
   authorizedQuery: composedAuthorizedQuery,
   capabilityQuery: composedCapabilityQuery,
